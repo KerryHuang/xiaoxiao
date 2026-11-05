@@ -22,6 +22,36 @@
 
 小小只出現在螢幕右上角的選單列，不會出現在 Dock。
 
+## 讓 AI 協助安裝
+
+已經裝好 Claude Code 的話，可以把下面整段貼給它，讓它幫你下載、安裝、檢查環境。需要你親手做的（登入、按「允許」、下載語音）它會停下來告訴你。
+
+```text
+請幫我在這台 Mac 安裝「小小」語音助理（https://github.com/KerryHuang/xiaoxiao）。
+照順序做，每一步都把指令的結果讀完再往下；失敗就停下來告訴我原因，不要換別的方法硬裝。
+
+1. 檢查環境：`uname -m` 要是 arm64，`sw_vers -productVersion` 要 13 以上；不符合就停止，告訴我這台不支援。
+2. 檢查 Claude Code：執行 `claude --version` 和 `claude auth status`。
+   沒裝或沒登入時，請告訴我自己執行 `claude` 再輸入 /login 登入；你不要幫我登入，也不要讀取任何憑證或 token。
+3. 下載最新版安裝檔：用 GitHub API
+   `curl -fsSL https://api.github.com/repos/KerryHuang/xiaoxiao/releases/latest`
+   找出 .dmg 的 browser_download_url，下載到一個新建的暫存資料夾。告訴我版本號和檔案大小。
+4. 安裝：`hdiutil attach` 掛載 .dmg，把 xiaoxiao.app 複製到 /Applications（已有舊版就先問我要不要覆蓋），
+   然後 `hdiutil detach`，刪掉暫存資料夾。
+5. 這版沒有 Apple 公證：執行 `xattr -dr com.apple.quarantine /Applications/xiaoxiao.app`，
+   再用 `codesign -v --deep --strict /Applications/xiaoxiao.app` 確認簽章完整。
+   不要關閉 Gatekeeper，也不要改任何系統安全設定。
+6. 檢查語音：`say -v '?' | grep Meijia`。沒有的話，告訴我到「系統設定 → 輔助使用 → 閱讀與朗讀 →
+   系統聲音旁的 ⓘ → 聲音」搜尋並下載「美佳」（這一步你沒辦法代勞）。
+7. 執行 `open -a xiaoxiao` 打開小小，然後告訴我接下來要自己做的事：
+   - 設定視窗會先下載約 1.1 GB 的語音模型，等它跑完；
+   - 系統問要不要讓小小使用麥克風時，由我自己按「允許」；
+   - 照視窗走完五個步驟，最後按「開始待命」。
+8. 最後回報：哪些步驟做完了、哪些要我自己動手、有沒有任何失敗。
+
+全程不要輸入我的密碼、不要用 sudo；需要管理員權限時停下來告訴我。
+```
+
 ## 第一次設定（引導）
 
 開啟後會自動跳出設定視窗：

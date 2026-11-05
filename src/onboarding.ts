@@ -6,9 +6,8 @@ import {
   checkVoice,
   ensureModels,
   h,
-  inputLevel,
   listInputs,
-  micPermission,
+  requestMicPermission,
   saveSettings,
   stopInputLevel,
   testWake,
@@ -41,14 +40,10 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
     const row = h("div", { class: "row" });
     if (step > 1) row.append(h("button", { class: "ghost", onclick: () => ((step -= 1), render()) }, "上一步"));
     if (step < 5) {
-      row.append(h("button", { class: "ghost", onclick: () => ((step += 1), render()) }, "稍後再說"));
-    } else {
-      const ready = passed.has(1) && passed.has(4);
-      const start = h("button", { disabled: !ready, onclick: finish }, "開始待命");
-      row.append(start);
-      if (!ready) body.append(h("p", { class: "hint" }, "要先完成第 1 步（麥克風）和第 4 步（Claude）才能開始待命。"));
+      row.append(h("button", { class: "ghost", onclick: () => ((step += 1), render()) }, "下一步"));
     }
     body.append(row);
+    return row;
   };
 
   const pass = (n: number) => {
@@ -75,21 +70,14 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
             msg.textContent = IS_WINDOWS ? "檢查中…" : "請在系統視窗按「允許」…";
             try {
               const devs = await listInputs();
-              const d = devs.find((x) => !x.bluetooth);
-              if (!d) {
+              if (!devs.some((x) => !x.bluetooth)) {
                 msg.textContent = IS_WINDOWS
                   ? "這台電腦目前看不到可用的麥克風（藍牙耳機不算）。請確認麥克風已接上；用遠端桌面連線時收不到本機麥克風，請到那台電腦前操作，或在遠端桌面的設定開啟麥克風轉接。"
                   : "找不到可用的麥克風（藍牙耳機不算），請確認麥克風已接上。";
                 return;
               }
-              // 開一次麥克風讓系統跳出詢問；被拒時 CoreAudio 不報錯，所以要另外問授權狀態
-              if ((await micPermission()) === "undetermined") await inputLevel(d.name);
-              let p = await micPermission();
-              for (let i = 0; p === "undetermined" && i < 120; i++) {
-                await new Promise((r) => setTimeout(r, 500));
-                p = await micPermission();
-              }
-              await stopInputLevel();
+              // 由系統跳詢問並回傳結果；不開麥克風，清單第一支可能是 iPhone，開了手機會跳提示
+              const p = await requestMicPermission();
               if (p !== "authorized") throw new Error(p === "undetermined" ? "還沒有回應系統的詢問" : "麥克風權限被關閉");
               pass(1);
             } catch (e) {
@@ -123,9 +111,12 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
         const selected = settings.input_device === d.name;
         const item = h("label", { class: `device${d.bluetooth ? " off" : ""}` });
         const radio = h("input", { type: "radio", name: "dev", checked: selected, disabled: d.bluetooth });
-        radio.onchange = () => {
+        // 選了就存：第 5 步試喊會用存好的設定。留在這頁讓使用者看音量條
+        radio.onchange = async () => {
           settings = { ...settings, input_device: d.name };
-          draw(devs);
+          await saveSettings(settings);
+          passed.add(2);
+          render();
         };
         item.append(radio, h("span", {}, d.name));
         if (d.bluetooth) item.append(h("small", {}, BT_NOTE));
@@ -139,9 +130,6 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
     };
     listInputs().then(draw);
     body.append(h("p", { class: "hint" }, "不選的話，小小會用系統預設麥克風；預設是藍牙時改用內建或 USB 麥克風。"));
-    const row = h("div", { class: "row" });
-    row.append(h("button", { onclick: async () => (await saveSettings(settings), pass(2)) }, "用這支"));
-    body.append(row);
     nav(body);
   };
 
@@ -184,6 +172,17 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
   // 5. 試喊
   const stepWake = (body: HTMLElement) => {
     const msg = h("p");
+    const hint = h("p", { class: "hint" });
+    let start: HTMLElement | undefined;
+    // 試喊聽到才顯示「開始待命」；沒聽到也要有路可走，不然環境吵的人永遠進不去
+    const showStart = () => {
+      start?.remove();
+      const heard = passed.has(5);
+      const ready = passed.has(1) && passed.has(4);
+      start = h("button", { class: heard ? "" : "ghost", disabled: !ready, onclick: finish }, heard ? "開始待命" : "先跳過，開始待命");
+      row.append(start);
+      hint.textContent = ready ? "" : "要先完成第 1 步（麥克風）和第 4 步（Claude）才能開始待命。";
+    };
     const btn = h(
       "button",
       {
@@ -200,12 +199,14 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
             msg.textContent = String(e);
           }
           btn.disabled = false;
+          showStart();
         },
       },
       "開始試喊",
     );
-    body.append(h("h2", {}, "5. 試喊一次"), h("p", {}, "按下按鈕後，用平常的音量說「嘿，小小」。"), btn, msg);
-    nav(body);
+    body.append(h("h2", {}, "5. 試喊一次"), h("p", {}, "按下按鈕後，用平常的音量說「嘿，小小」。"), btn, msg, hint);
+    const row = nav(body);
+    if (passed.has(5)) showStart();
   };
 
   // 0. 先把模型準備好（約 1.1 GB，只需下載一次）

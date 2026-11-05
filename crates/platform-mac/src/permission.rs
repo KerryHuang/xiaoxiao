@@ -43,6 +43,70 @@ pub fn mic_permission() -> MicPermission {
     }
 }
 
+/// 跳出系統詢問並等使用者回應（已回應過就立刻回傳）。不開麥克風，所以不會動到 iPhone 等裝置。
+/// 用這支而不是「開麥克風＋輪詢狀態」：開麥克風觸發的詢問，同一個行程內狀態可能一直停在未決定。
+pub fn request_mic_permission() -> MicPermission {
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    const PENDING: u8 = 0;
+    const GRANTED: u8 = 1;
+    const REFUSED: u8 = 2;
+    static ANSWER: AtomicU8 = AtomicU8::new(PENDING);
+
+    // Objective-C 全域 block 的記憶體配置；沒有捕捉變數，結果放在 ANSWER
+    #[repr(C)]
+    struct Descriptor {
+        reserved: usize,
+        size: usize,
+    }
+    #[repr(C)]
+    struct Block {
+        isa: *const c_void,
+        flags: i32,
+        reserved: i32,
+        invoke: unsafe extern "C" fn(*const Block, bool),
+        descriptor: *const Descriptor,
+    }
+    unsafe impl Sync for Block {}
+    unsafe extern "C" fn answered(_: *const Block, granted: bool) {
+        ANSWER.store(if granted { GRANTED } else { REFUSED }, Ordering::SeqCst);
+    }
+    static DESCRIPTOR: Descriptor = Descriptor { reserved: 0, size: size_of::<Block>() };
+    unsafe extern "C" {
+        static _NSConcreteGlobalBlock: c_void;
+    }
+    const BLOCK_IS_GLOBAL: i32 = 1 << 28;
+    static BLOCK: Block = Block {
+        isa: &raw const _NSConcreteGlobalBlock,
+        flags: BLOCK_IS_GLOBAL,
+        reserved: 0,
+        invoke: answered,
+        descriptor: &DESCRIPTOR,
+    };
+
+    ANSWER.store(PENDING, Ordering::SeqCst);
+    type Send = unsafe extern "C" fn(*const c_void, *const c_void, *const c_void, *const Block);
+    unsafe {
+        let cls = objc::objc_getClass(c"AVCaptureDevice".as_ptr());
+        if cls.is_null() {
+            return MicPermission::NotDetermined;
+        }
+        let sel = objc::sel_registerName(c"requestAccessForMediaType:completionHandler:".as_ptr());
+        let send: Send = std::mem::transmute(objc::objc_msgSend as *const ());
+        send(cls, sel, objc::AVMediaTypeAudio, &BLOCK);
+    }
+    // 最多等 2 分鐘，沒回應就照當下狀態回報，畫面會請使用者再按一次
+    for _ in 0..1200 {
+        match ANSWER.load(Ordering::SeqCst) {
+            GRANTED => return MicPermission::Authorized,
+            REFUSED => return mic_permission(),
+            _ => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
+    mic_permission()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

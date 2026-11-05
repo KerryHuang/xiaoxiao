@@ -27,7 +27,7 @@ pub use engine::platform::MicPermission;
 #[cfg(windows)]
 pub use micusage::WinMicUsage;
 #[cfg(windows)]
-pub use permission::mic_permission;
+pub use permission::{mic_permission, request_mic_permission};
 #[cfg(windows)]
 pub use screen::WinScreen;
 #[cfg(windows)]

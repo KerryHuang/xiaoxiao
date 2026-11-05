@@ -20,11 +20,11 @@ pub fn run() {
             // 只出現在選單列，不出現在 Dock
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            // 開機自動啟動預設開啟；開發版不註冊，免得把 debug 執行檔設成登入項目
+            // 不開機自動啟動，使用者打開才啟動；舊版註冊過的登入項目要清掉
             if !cfg!(debug_assertions) {
                 let al = app.autolaunch();
-                if !al.is_enabled().unwrap_or(false) {
-                    let _ = al.enable();
+                if al.is_enabled().unwrap_or(false) {
+                    let _ = al.disable();
                 }
             }
             let host = engine_host::Host::new(app.handle())?;
@@ -47,7 +47,7 @@ pub fn run() {
             engine_host::list_inputs,
             engine_host::input_level,
             engine_host::stop_input_level,
-            engine_host::mic_permission,
+            engine_host::request_mic_permission,
             engine_host::check_claude,
             engine_host::check_voice,
             engine_host::test_wake,

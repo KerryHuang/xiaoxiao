@@ -11,6 +11,6 @@ mod speaker;
 pub use audio::{MacAudio, new_audio};
 pub use devices::MacDevices;
 pub use micusage::MacMicUsage;
-pub use permission::{MicPermission, mic_permission};
+pub use permission::{MicPermission, mic_permission, request_mic_permission};
 pub use screen::MacScreen;
 pub use speaker::MacSpeaker;

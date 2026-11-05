@@ -383,10 +383,14 @@ pub async fn input_level(host: tauri::State<'_, Host>, device: String) -> Result
     .map_err(|e| e.to_string())?
 }
 
-/// 麥克風授權狀態：authorized／denied／restricted／undetermined。
+/// 跳出系統詢問並回傳結果（Windows 沒有詢問，直接回報設定裡的開關）。
 #[tauri::command]
-pub fn mic_permission() -> &'static str {
-    match os::mic_permission() {
+pub async fn request_mic_permission() -> Result<&'static str, String> {
+    tauri::async_runtime::spawn_blocking(|| permission_name(os::request_mic_permission())).await.map_err(|e| e.to_string())
+}
+
+fn permission_name(p: os::MicPermission) -> &'static str {
+    match p {
         os::MicPermission::Authorized => "authorized",
         os::MicPermission::Denied => "denied",
         os::MicPermission::Restricted => "restricted",

@@ -18,6 +18,11 @@ fn value(root: HKEY, sub: &str) -> Option<String> {
     Some(String::from_utf16_lossy(&buf[..len]))
 }
 
+/// Windows 桌面程式沒有執行時的權限詢問，只能回報設定裡的開關。
+pub fn request_mic_permission() -> MicPermission {
+    mic_permission()
+}
+
 pub fn mic_permission() -> MicPermission {
     decide(
         value(HKEY_LOCAL_MACHINE, CONSENT).as_deref(),

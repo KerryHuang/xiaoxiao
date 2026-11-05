@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 pub use platform_mac::{
     MacAudio as OsAudio, MacDevices as OsDevices, MacMicUsage as OsMicUsage, MacScreen as OsScreen, MacSpeaker as OsSpeaker, MicPermission,
-    mic_permission, new_audio,
+    new_audio, request_mic_permission,
 };
 #[cfg(windows)]
 pub use platform_windows::{
     MicPermission, WinAudio as OsAudio, WinDevices as OsDevices, WinMicUsage as OsMicUsage, WinScreen as OsScreen, WinSpeaker as OsSpeaker,
-    mic_permission, new_audio, voice_ok,
+    new_audio, request_mic_permission, voice_ok,
 };
 
 /// 系統有沒有小小要用的語音（美佳）。

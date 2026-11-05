@@ -33,6 +33,14 @@ struct Inner {
     onboarding_open: bool,
 }
 
+impl Inner {
+    fn fail(&mut self, msg: &str) {
+        self.status = Some(Status::Problem(msg.to_string()));
+        // 引擎沒了就不會再有人回報通話結束，留著角色會永遠回不來
+        self.pause = None;
+    }
+}
+
 /// 都只在記憶體：重開小小一律回到預設。
 #[derive(Default)]
 pub struct CharacterState {
@@ -84,7 +92,9 @@ pub fn on_loading(app: &AppHandle, msg: &str) {
 }
 
 pub fn on_problem(app: &AppHandle, msg: &str) {
-    set_status(app, Status::Problem(msg.to_string()));
+    app.state::<CharacterState>().inner.lock().unwrap().fail(msg);
+    emit_view(app);
+    sync(app);
 }
 
 pub fn on_state(app: &AppHandle, s: State) {
@@ -187,6 +197,12 @@ pub fn set_onboarding(app: &AppHandle, open: bool) {
 pub fn reopen(app: &AppHandle) {
     let Some(host) = app.try_state::<Host>() else { return };
     if host.settings().onboarded {
+        // 角色若在拔掉的螢幕上看不到，再打開一次 app 就能拉回來
+        if let Some(w) = app.get_webview_window(LABEL)
+            && w.is_visible().unwrap_or(false)
+        {
+            place(app, &w);
+        }
         set_hidden(app, false);
     } else {
         crate::engine_host::show_window(app);
@@ -236,6 +252,14 @@ mod tests {
 
     fn v(s: Status, p: Option<PauseReason>) -> CharacterView {
         view(CharacterKind::Pixel, &s, p)
+    }
+
+    #[test]
+    fn engine_failure_forgets_old_call_pause() {
+        let mut g = Inner { pause: Some(PauseReason::Call), ..Default::default() };
+        g.fail("無法啟動");
+        assert_eq!(g.pause, None, "引擎沒了就不會再有人回報通話結束，角色會永遠回不來");
+        assert_eq!(g.status, Some(Status::Problem("無法啟動".into())));
     }
 
     #[test]

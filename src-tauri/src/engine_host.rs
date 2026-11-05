@@ -315,8 +315,10 @@ impl Host {
             character::on_state(&app, s);
         }));
         let app = a.clone();
+        let h2 = h.clone();
         h.set_on_pause(Box::new(move |p| {
-            tray::show_rest(&app, p == Some(PauseReason::Rest));
+            // 看休息旗標，不看暫停原因：休息中來電時原因是通話，但小小還在休息
+            tray::show_rest(&app, h2.resting());
             character::on_pause(&app, p);
         }));
         tray::show_state(a, h.state());

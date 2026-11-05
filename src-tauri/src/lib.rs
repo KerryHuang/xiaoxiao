@@ -9,6 +9,8 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 兩個小小會互相當成「別的程式在用麥克風」而一直暫停；要最先註冊
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| engine_host::show_window(app)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())

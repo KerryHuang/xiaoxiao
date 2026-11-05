@@ -47,6 +47,11 @@ impl CpalAudio {
     }
 }
 
+/// 這個錯誤之後串流還能不能用。緩衝區不連續、路由切換都只是通知，資料照常進來。
+fn ends_stream(kind: cpal::ErrorKind) -> bool {
+    !matches!(kind, cpal::ErrorKind::Xrun | cpal::ErrorKind::DeviceChanged | cpal::ErrorKind::RealtimeDenied)
+}
+
 fn spawn_stream(name: String, tx: Sender<Msg>, stop: Receiver<()>, ready: Sender<Result<u32, AudioError>>) {
     let host = cpal::default_host();
     let dev = host.input_devices().ok().and_then(|mut it| it.find(|d| d.to_string() == name));
@@ -65,8 +70,11 @@ fn spawn_stream(name: String, tx: Sender<Msg>, stop: Receiver<()>, ready: Sender
     let rate = cfg.sample_rate();
     let mono = move |x: &[f32]| -> Vec<f32> { x.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect() };
     let tx_err = tx.clone();
-    let on_err = move |_e: cpal::Error| {
-        let _ = tx_err.send(Msg::Dead);
+    let on_err = move |e: cpal::Error| {
+        eprintln!("收音回報：{e}");
+        if ends_stream(e.kind()) {
+            let _ = tx_err.send(Msg::Dead);
+        }
     };
     let stream = match cfg.sample_format() {
         cpal::SampleFormat::F32 => {
@@ -158,5 +166,20 @@ impl AudioSource for CpalAudio {
 impl Drop for CpalAudio {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cpal::ErrorKind::*;
+
+    #[test]
+    fn only_fatal_errors_end_the_stream() {
+        // Windows 開串流就可能回報這些，串流其實還活著；當成失效會無限重開、收不到聲音
+        assert!(!ends_stream(Xrun));
+        assert!(!ends_stream(DeviceChanged));
+        assert!(ends_stream(DeviceNotAvailable));
+        assert!(ends_stream(PermissionDenied));
     }
 }

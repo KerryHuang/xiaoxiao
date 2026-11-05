@@ -88,7 +88,7 @@ pub fn posix_abs(dir: &str) -> String {
     s.trim_end_matches('/').to_string()
 }
 
-/// 網路路徑（`\\\\server\\share`）。沒驗過 Claude Code 怎麼比對它們，秘密檔規則可能失效，所以不給讀取權。
+/// 網路路徑（`\\server\share`）。沒驗過 Claude Code 怎麼比對它們，秘密檔規則可能失效，所以不給讀取權。
 pub fn is_network_path(dir: &str) -> bool {
     dir.starts_with(r"\\") || dir.starts_with("//")
 }

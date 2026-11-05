@@ -16,7 +16,7 @@
 | 計時十分鐘 | 在本機開始計時，不用連網 |
 | 記一下要回客戶的信 | 確認後寫進筆記檔 |
 
-也可以按快捷鍵或點選單列、系統匣的圖示叫它。回答後 8 秒內能直接追問，不用再喊喚醒詞。
+也可以按快捷鍵、點桌面的小角色，或點選單列、系統匣的圖示叫它。回答後 8 秒內能直接追問，不用再喊喚醒詞。
 
 ## 需要什麼
 
@@ -57,7 +57,7 @@
 | `crates/kws`、`crates/asr` | 喚醒詞（sherpa-onnx）、聽寫（whisper.cpp） |
 | `crates/audio-cpal` | 兩個平台共用的收音 |
 | `crates/platform-mac`、`crates/platform-windows` | 各平台的裝置、暫停偵測、語音 |
-| `src-tauri`、`src` | 系統匣與視窗、設定和引導畫面 |
+| `src-tauri`、`src` | 系統匣與視窗、桌面小角色、設定和引導畫面 |
 
 需要 Rust（版本見 `rust-toolchain.toml`）、[Bun](https://bun.sh)、CMake 和 C++ 編譯器。
 

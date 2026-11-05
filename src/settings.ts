@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { IS_WINDOWS, type Settings, h, listInputs, saveSettings } from "./api";
+import { IS_WINDOWS, type Settings, h, listInputs, saveSettings, setCharacter } from "./api";
+import { CHARACTERS, render } from "./characters";
 
 /** 設定頁。儲存後引擎會重新啟動。 */
 export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboarding: () => void) {
@@ -8,6 +9,28 @@ export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboardi
 
   const field = (label: string, ...control: (Node | string)[]) =>
     h("div", { class: "field" }, h("label", {}, label), ...control);
+
+  // 小角色造型：選了馬上換，不用按儲存
+  const chars = h("div", { class: "characters" });
+  const drawChars = () => {
+    chars.replaceChildren(
+      ...CHARACTERS.map((c) =>
+        h("button", {
+          class: c.kind === s.character ? "character picked" : "character",
+          onclick: async () => {
+            try {
+              await setCharacter(c.kind);
+              s.character = c.kind; // 之後按儲存才不會蓋回舊的
+              drawChars();
+            } catch (e) {
+              status.textContent = `換造型失敗：${e}`;
+            }
+          },
+        }, h("span", { class: "preview", innerHTML: render(c.kind, "idle") }), c.name),
+      ),
+    );
+  };
+  drawChars();
 
   // 收音麥克風
   const dev = h("select");
@@ -85,6 +108,7 @@ export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboardi
   root.replaceChildren(
     h("h1", {}, "小小設定"),
     h("section", { class: "card" },
+      field("小角色造型", chars),
       field("收音麥克風", dev),
       field("快捷鍵", hotkey, h("small", {}, IS_WINDOWS ? "例如 Control+Alt+Space" : "例如 Control+Option+Space")),
       field("可讀資料夾",

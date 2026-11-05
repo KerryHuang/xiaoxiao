@@ -16,6 +16,14 @@ pub enum CharacterKind {
     /// 小訊
     #[default]
     Pixel,
+    /// 小雲
+    Cloud,
+    /// 小喵
+    Cat,
+    /// 小芽
+    Sprout,
+    /// 小企
+    Penguin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -145,6 +153,23 @@ mod tests {
         let m = [Rect { x: 0, y: 0, w: 1000, h: 800 }, Rect { x: 1000, y: 0, w: 1000, h: 800 }];
         // 一半跨在第二個螢幕，超出它的右邊界
         assert_eq!(clamp_to_monitors(1950, 100, 96, 96, &m), (1904, 100));
+    }
+
+    #[test]
+    fn all_eight_kinds_use_lowercase_names() {
+        for (name, kind) in [
+            ("mic", CharacterKind::Mic),
+            ("blob", CharacterKind::Blob),
+            ("owl", CharacterKind::Owl),
+            ("pixel", CharacterKind::Pixel),
+            ("cloud", CharacterKind::Cloud),
+            ("cat", CharacterKind::Cat),
+            ("sprout", CharacterKind::Sprout),
+            ("penguin", CharacterKind::Penguin),
+        ] {
+            assert_eq!(serde_json::from_str::<CharacterKind>(&format!("\"{name}\"")).unwrap(), kind);
+            assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{name}\""));
+        }
     }
 
     #[test]

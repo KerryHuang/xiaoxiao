@@ -7,6 +7,10 @@ export const CHARACTERS: { kind: CharacterKind; name: string }[] = [
   { kind: "mic", name: "小麥" },
   { kind: "blob", name: "小圓" },
   { kind: "owl", name: "小鴞" },
+  { kind: "cloud", name: "小雲" },
+  { kind: "cat", name: "小喵" },
+  { kind: "sprout", name: "小芽" },
+  { kind: "penguin", name: "小企" },
 ];
 
 function face(s: Look, x1: number, x2: number, y: number, mx: number, my: number, ink = INK): string {
@@ -124,11 +128,63 @@ function pixel(s: Look): string {
   return `<g shape-rendering="crispEdges">${out}</g>` + fx(s);
 }
 
+function cloud(s: Look): string {
+  const c = s === "pause" ? "#c5ced6" : "#bfe0fb";
+  return (
+    `<g fill="${c}"><circle cx="40" cy="64" r="20"/><circle cx="60" cy="48" r="27"/><circle cx="82" cy="64" r="18"/>` +
+    `<rect x="28" y="60" width="66" height="26" rx="13"/></g>` +
+    `<ellipse cx="50" cy="32" rx="10" ry="5" fill="#fff" opacity=".6"/>` +
+    face(s, 48, 72, 58, 60, 71) +
+    `<circle cx="39" cy="68" r="4" fill="#f4b8a8" opacity=".8"/><circle cx="81" cy="68" r="4" fill="#f4b8a8" opacity=".8"/>` +
+    fx(s, "#4f8fc4")
+  );
+}
+
+function cat(s: Look): string {
+  const body = s === "pause" ? "#c4bfce" : "#c9b8e8";
+  const ear = "#f3c6d3";
+  return (
+    `<path d="M90 92q22 2 16-20" fill="none" stroke="${body}" stroke-width="8" stroke-linecap="round"/>` +
+    `<path d="M28 50l2-32 24 16zM92 50l-2-32-24 16z" fill="${body}"/>` +
+    `<path d="M34 40l1-13 10 7zM86 40l-1-13-10 7z" fill="${ear}"/>` +
+    `<ellipse cx="60" cy="68" rx="38" ry="34" fill="${body}"/>` +
+    `<path d="M26 66l12 2M26 76l12-2M94 66l-12 2M94 76l-12-2" stroke="${INK}" stroke-width="2" stroke-linecap="round" opacity=".55"/>` +
+    face(s, 47, 73, 62, 60, 76) +
+    fx(s, "#7d63b8")
+  );
+}
+
+function sprout(s: Look): string {
+  const [pot, rim, leaf] = s === "pause" ? ["#c4a795", "#b39684", "#a9b8a2"] : ["#e39a6c", "#cf8253", "#7cc47a"];
+  return (
+    `<path d="M60 44V26" stroke="${leaf}" stroke-width="4" stroke-linecap="round"/>` +
+    `<path d="M60 30C50 14 38 14 32 18c2 12 14 18 28 12zM60 30c10-16 22-16 28-12-2 12-14 18-28 12z" fill="${leaf}"/>` +
+    `<path d="M32 50h56l-7 50a6 6 0 0 1-6 5H45a6 6 0 0 1-6-5z" fill="${pot}"/>` +
+    `<rect x="26" y="40" width="68" height="15" rx="5" fill="${rim}"/>` +
+    face(s, 49, 71, 72, 60, 84) +
+    `<circle cx="42" cy="82" r="4" fill="#f6c4b0" opacity=".9"/><circle cx="78" cy="82" r="4" fill="#f6c4b0" opacity=".9"/>` +
+    fx(s, "#4f9c4d")
+  );
+}
+
+function penguin(s: Look): string {
+  const [body, foot] = s === "pause" ? ["#6d7684", "#c9b79c"] : ["#39465c", "#f2a33c"];
+  return (
+    `<ellipse cx="45" cy="104" rx="11" ry="5" fill="${foot}"/><ellipse cx="75" cy="104" rx="11" ry="5" fill="${foot}"/>` +
+    `<path d="M26 56q-10 16-4 28 8-4 10-14zM94 56q10 16 4 28-8-4-10-14z" fill="${body}"/>` +
+    `<rect x="24" y="18" width="72" height="86" rx="36" fill="${body}"/>` +
+    `<ellipse cx="60" cy="68" rx="28" ry="32" fill="#fbfaf6"/>` +
+    face(s, 48, 72, 56, 60, 68) +
+    `<circle cx="40" cy="66" r="4" fill="#f4b8a8" opacity=".85"/><circle cx="80" cy="66" r="4" fill="#f4b8a8" opacity=".85"/>` +
+    fx(s, "#4f79b8")
+  );
+}
+
 const WARNING =
   `<circle cx="100" cy="100" r="15" fill="#e5484d" stroke="#fff" stroke-width="3"/>` +
   `<rect x="98" y="91" width="4" height="11" rx="2" fill="#fff"/><circle cx="100" cy="107" r="2.4" fill="#fff"/>`;
 
-const DRAW: Record<CharacterKind, (s: Look) => string> = { mic, blob, owl, pixel };
+const DRAW: Record<CharacterKind, (s: Look) => string> = { mic, blob, owl, pixel, cloud, cat, sprout, penguin };
 
 /** 回傳角色的 SVG 字串；內容全是程式內建，沒有外部輸入。 */
 export function render(kind: CharacterKind, look: Look, warning = false): string {

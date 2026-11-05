@@ -10,9 +10,12 @@ export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboardi
   const field = (label: string, ...control: (Node | string)[]) =>
     h("div", { class: "field" }, h("label", {}, label), ...control);
 
-  // 小角色造型：選了馬上換，不用按儲存
+  // 小角色造型：平常收在抽屜裡只顯示目前的角色；選了馬上換，不用按儲存
+  const current = h("span", { class: "current-character" });
   const chars = h("div", { class: "characters" });
   const drawChars = () => {
+    const picked = CHARACTERS.find((c) => c.kind === s.character) ?? CHARACTERS[0];
+    current.replaceChildren(h("span", { class: "preview", innerHTML: render(picked.kind, "idle") }), picked.name);
     chars.replaceChildren(
       ...CHARACTERS.map((c) =>
         h("button", {
@@ -31,6 +34,10 @@ export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboardi
     );
   };
   drawChars();
+  const drawer = h("details", { class: "drawer" },
+    h("summary", {}, current, h("span", { class: "hint" }, "換一個")),
+    chars,
+  );
 
   // 收音麥克風
   const dev = h("select");
@@ -108,7 +115,7 @@ export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboardi
   root.replaceChildren(
     h("h1", {}, "小小設定"),
     h("section", { class: "card" },
-      field("小角色造型", chars),
+      field("小角色造型", drawer),
       field("收音麥克風", dev),
       field("快捷鍵", hotkey, h("small", {}, IS_WINDOWS ? "例如 Control+Alt+Space" : "例如 Control+Option+Space")),
       field("可讀資料夾",

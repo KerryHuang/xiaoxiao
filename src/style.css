@@ -36,8 +36,15 @@ h2 { font-size: 17px; margin: 0 0 8px; }
 button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
 button.ghost { background: transparent; color: var(--accent); }
 button.small { padding: 2px 8px; font-size: 13px; }
-.characters { display: flex; gap: 8px; }
-button.character { flex: 1; padding: 6px 4px; background: transparent; color: var(--text); border-color: var(--line); }
+.drawer { border: 1px solid var(--line); border-radius: 8px; }
+.drawer summary { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; cursor: pointer; list-style: none; }
+.drawer summary::-webkit-details-marker { display: none; }
+.drawer summary .hint::after { content: " ▾"; }
+.drawer[open] summary .hint::after { content: " ▴"; }
+.current-character { display: flex; align-items: center; gap: 8px; }
+.current-character .preview, .current-character .preview svg { width: 40px; height: 40px; margin: 0; }
+.characters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 4px 10px 10px; }
+button.character { padding: 6px 4px; background: transparent; color: var(--text); border-color: var(--line); }
 button.character.picked { border: 2px solid var(--accent); padding: 5px 3px; }
 .preview, .preview svg { display: block; width: 56px; height: 56px; margin: 0 auto; }
 button:disabled { opacity: 0.45; cursor: default; }

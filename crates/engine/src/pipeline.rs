@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Datelike, FixedOffset, Timelike};
 use serde_json::json;
 
-use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, parse_confirm_reply};
+use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
 use crate::audio::{Agc, EndpointEvent, Endpointer, RingBuffer, SPEECH_RMS, rms};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
@@ -604,7 +604,7 @@ impl<P: Platform> Engine<P> {
         let now = self.p.now();
         let Ok((due, pending)) = self.store.reload(now) else { return };
         for r in due {
-            self.p.notifier().notify("小小", &format!("你錯過了一個提醒：{}", r.text));
+            self.p.notifier().notify("小小", &missed_message(&r));
             let _ = self.store.remove(&r.id);
         }
         self.reminders = pending;

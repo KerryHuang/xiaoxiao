@@ -213,7 +213,10 @@ fn timing() -> Timing {
 }
 
 fn rig(mode: &str, setup: impl FnOnce(&mut World)) -> Rig {
-    let dir = tempfile::tempdir().unwrap();
+    rig_in(tempfile::tempdir().unwrap(), mode, setup)
+}
+
+fn rig_in(dir: tempfile::TempDir, mode: &str, setup: impl FnOnce(&mut World)) -> Rig {
     let w: W = Arc::new(Mutex::new(World::default()));
     setup(&mut w.lock().unwrap());
     let p = FakePlatform {
@@ -478,4 +481,22 @@ fn mute_from_tray_pauses() {
     assert_eq!(r.h.state(), State::Paused, "靜音只能從選單解除");
     r.h.set_muted(false);
     r.wait("解除靜音", |_, s| s == State::Idle);
+}
+
+#[test]
+fn missed_reminder_notified_on_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = engine::action::ReminderStore::new(dir.path().join("reminders.json"));
+    let past = chrono::Local::now().fixed_offset() - chrono::Duration::hours(1);
+    let future = chrono::Local::now().fixed_offset() + chrono::Duration::hours(1);
+    store.add(&engine::action::Reminder { id: "a".into(), at: past, text: "繳電費".into() }).unwrap();
+    store.add(&engine::action::Reminder { id: "b".into(), at: future, text: "開會".into() }).unwrap();
+    let r = rig_in(dir, "ok", |_| {});
+    r.wait("通知錯過的提醒", |w, _| !w.notes.is_empty());
+    std::thread::sleep(Duration::from_millis(50));
+    let w = r.w.lock().unwrap();
+    assert_eq!(w.notes.len(), 1, "未到期的不能提前通知：{:?}", w.notes);
+    assert_eq!(w.notes[0].1, "你錯過了一個提醒：繳電費");
+    let s = fs::read_to_string(r.dir.path().join("reminders.json")).unwrap();
+    assert!(!s.contains("繳電費") && s.contains("開會"), "過期的移除、未到期的保留：{s}");
 }

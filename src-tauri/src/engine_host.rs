@@ -1,0 +1,374 @@
+//! 把引擎跑在背景執行緒，並提供給 UI 的 commands。
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+
+use chrono::{DateTime, FixedOffset};
+use engine::audio::{Agc, RingBuffer, rms};
+use engine::claude::{ClaudeCfg, find_claude};
+use engine::config::Settings;
+use engine::pipeline::{Engine, EngineHandle, Platform, Trigger};
+use engine::platform::*;
+use platform_mac::{MacAudio, MacDevices, MacMicUsage, MacScreen, MacSpeaker};
+use tauri::{AppHandle, Manager};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
+
+use crate::tray;
+
+const KWS_DIR: &str = "kws";
+const SMALL: &str = "ggml-small.bin";
+const TURBO: &str = "ggml-large-v3-turbo-q5_0.bin";
+
+// ---------- 平台 ----------
+
+struct TauriNotifier(AppHandle);
+
+impl Notifier for TauriNotifier {
+    fn notify(&self, title: &str, body: &str) {
+        let _ = self.0.notification().builder().title(title).body(body).show();
+    }
+}
+
+pub struct MacPlatform {
+    audio: MacAudio,
+    spotter: kws::Spotter,
+    small: asr::Whisper,
+    turbo: asr::Whisper,
+    mic: MacMicUsage,
+    speaker: MacSpeaker,
+    notifier: TauriNotifier,
+    claude: ClaudeCfg,
+    data: PathBuf,
+    logs: PathBuf,
+}
+
+impl MacPlatform {
+    fn load(app: &AppHandle, paths: &Paths, settings: &Settings) -> Result<MacPlatform, String> {
+        let models = paths.models();
+        Ok(MacPlatform {
+            audio: MacAudio::new(),
+            spotter: kws::Spotter::new(&models.join(KWS_DIR))?,
+            small: asr::Whisper::new(&models.join(SMALL))?,
+            turbo: asr::Whisper::new(&models.join(TURBO))?,
+            mic: MacMicUsage::new(),
+            speaker: MacSpeaker,
+            notifier: TauriNotifier(app.clone()),
+            claude: claude_cfg(paths, settings),
+            data: paths.data.clone(),
+            logs: paths.logs.clone(),
+        })
+    }
+}
+
+impl Platform for MacPlatform {
+    fn audio(&mut self) -> &mut dyn AudioSource {
+        &mut self.audio
+    }
+    fn spotter(&mut self) -> &mut dyn Spotter {
+        &mut self.spotter
+    }
+    fn verifier(&self) -> &dyn Transcriber {
+        &self.small
+    }
+    fn transcriber(&self) -> &dyn Transcriber {
+        &self.turbo
+    }
+    fn mic_usage(&self) -> &dyn MicUsage {
+        &self.mic
+    }
+    fn screen(&self) -> &dyn ScreenState {
+        &MacScreen
+    }
+    fn speaker(&self) -> &dyn Speaker {
+        &self.speaker
+    }
+    fn notifier(&self) -> &dyn Notifier {
+        &self.notifier
+    }
+    fn claude(&self) -> ClaudeCfg {
+        self.claude.clone()
+    }
+    fn reminders_path(&self) -> PathBuf {
+        self.data.join("reminders.json")
+    }
+    fn events_path(&self) -> PathBuf {
+        self.logs.join("events.jsonl")
+    }
+    fn now(&self) -> DateTime<FixedOffset> {
+        chrono::Local::now().fixed_offset()
+    }
+}
+
+fn home() -> PathBuf {
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+}
+
+/// 從 Finder 或登入項目啟動時 PATH 只有系統目錄，補上 claude 常見的安裝位置。
+fn search_path() -> String {
+    let h = home();
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    for d in [h.join(".local/bin"), h.join(".claude/local"), "/opt/homebrew/bin".into(), "/usr/local/bin".into()] {
+        if !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
+    std::env::join_paths(dirs).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+fn claude_cfg(paths: &Paths, settings: &Settings) -> ClaudeCfg {
+    let bin = find_claude(&search_path(), &home().join("Library/Application Support/Claude")).unwrap_or_else(|| "claude".into());
+    let workdir = paths.data.join("workdir");
+    let _ = std::fs::create_dir_all(&workdir);
+    ClaudeCfg { bin, workdir, read_dirs: settings.read_dirs.clone() }
+}
+
+// ---------- 宿主 ----------
+
+#[derive(Clone)]
+pub struct Paths {
+    pub settings: PathBuf,
+    pub data: PathBuf,
+    pub logs: PathBuf,
+}
+
+impl Paths {
+    fn new(app: &AppHandle) -> Result<Paths, String> {
+        let p = app.path();
+        Ok(Paths {
+            settings: p.app_config_dir().map_err(|e| e.to_string())?.join("settings.json"),
+            data: p.app_data_dir().map_err(|e| e.to_string())?,
+            logs: p.app_log_dir().map_err(|e| e.to_string())?,
+        })
+    }
+
+    /// 正式：<app_data_dir>/models；開發版找不到時退回 repo 的 models/。
+    pub fn models(&self) -> PathBuf {
+        let installed = self.data.join("models");
+        if cfg!(debug_assertions) && !installed.join(KWS_DIR).join("tokens.txt").is_file() {
+            return Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        }
+        installed
+    }
+}
+
+struct Running {
+    stop: Arc<AtomicBool>,
+    thread: JoinHandle<()>,
+}
+
+struct Inner {
+    app: AppHandle,
+    paths: Paths,
+    settings: Mutex<Settings>,
+    running: Mutex<Option<Running>>,
+    handle: Mutex<Option<EngineHandle>>,
+    muted: AtomicBool,
+    meter: Mutex<Option<(String, MacAudio)>>,
+}
+
+#[derive(Clone)]
+pub struct Host(Arc<Inner>);
+
+impl Host {
+    pub fn new(app: &AppHandle) -> Result<Host, String> {
+        let paths = Paths::new(app)?;
+        let settings = Settings::load(&paths.settings).unwrap_or_else(|e| {
+            eprintln!("{e}，改用預設設定");
+            Settings::default()
+        });
+        Ok(Host(Arc::new(Inner {
+            app: app.clone(),
+            paths,
+            settings: Mutex::new(settings),
+            running: Mutex::new(None),
+            handle: Mutex::new(None),
+            muted: AtomicBool::new(false),
+            meter: Mutex::new(None),
+        })))
+    }
+
+    pub fn trigger(&self, t: Trigger) {
+        if let Some(h) = self.0.handle.lock().unwrap().as_ref() {
+            h.trigger(t);
+        }
+    }
+
+    pub fn muted(&self) -> bool {
+        self.0.muted.load(Ordering::SeqCst)
+    }
+
+    pub fn set_muted(&self, on: bool) {
+        self.0.muted.store(on, Ordering::SeqCst);
+        if let Some(h) = self.0.handle.lock().unwrap().as_ref() {
+            h.set_muted(on);
+        }
+    }
+
+    pub fn claude_bin(&self) -> PathBuf {
+        claude_cfg(&self.0.paths, &self.0.settings.lock().unwrap()).bin
+    }
+
+    /// 停掉舊引擎（如果有），在背景載入模型並啟動新引擎。
+    pub fn restart(&self) {
+        let me = self.clone();
+        std::thread::spawn(move || {
+            if let Some(old) = me.0.running.lock().unwrap().take() {
+                old.stop.store(true, Ordering::SeqCst);
+                let _ = old.thread.join();
+            }
+            *me.0.handle.lock().unwrap() = None;
+            me.register_hotkey();
+            let stop = Arc::new(AtomicBool::new(false));
+            let s2 = stop.clone();
+            let me2 = me.clone();
+            let thread = std::thread::spawn(move || me2.run_engine(&s2));
+            *me.0.running.lock().unwrap() = Some(Running { stop, thread });
+        });
+    }
+
+    pub fn shutdown(&self) {
+        if let Some(r) = self.0.running.lock().unwrap().as_ref() {
+            r.stop.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn run_engine(&self, stop: &AtomicBool) {
+        let settings = self.0.settings.lock().unwrap().clone();
+        if let Err(e) = settings.validate() {
+            tray::show_problem(&self.0.app, &format!("回答引擎{e}"));
+            return;
+        }
+        tray::show_problem(&self.0.app, "載入中…");
+        let p = match MacPlatform::load(&self.0.app, &self.0.paths, &settings) {
+            Ok(p) => p,
+            Err(e) => {
+                tray::show_problem(&self.0.app, &format!("無法啟動：{e}"));
+                return;
+            }
+        };
+        let mut engine = Engine::new(p, settings);
+        let h = engine.handle();
+        h.set_muted(self.muted());
+        let app = self.0.app.clone();
+        h.set_on_state(Box::new(move |s| tray::show_state(&app, s)));
+        tray::show_state(&self.0.app, h.state());
+        *self.0.handle.lock().unwrap() = Some(h);
+        engine.run(stop);
+    }
+
+    fn register_hotkey(&self) {
+        let gs = self.0.app.global_shortcut();
+        let _ = gs.unregister_all();
+        let key = self.0.settings.lock().unwrap().hotkey.clone();
+        let me = self.clone();
+        let r = gs.on_shortcut(key.as_str(), move |_app, _s, ev| {
+            if ev.state == ShortcutState::Pressed {
+                me.trigger(Trigger::Hotkey);
+            }
+        });
+        if let Err(e) = r {
+            eprintln!("快捷鍵 {key} 註冊失敗：{e}");
+        }
+    }
+}
+
+// ---------- commands ----------
+
+#[tauri::command]
+pub fn get_settings(host: tauri::State<Host>) -> Settings {
+    host.0.settings.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn save_settings(host: tauri::State<Host>, s: Settings) -> Result<(), String> {
+    s.save(&host.0.paths.settings)?;
+    *host.0.settings.lock().unwrap() = s;
+    host.restart();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_inputs() -> Vec<InputDevice> {
+    MacDevices.inputs()
+}
+
+/// 指定裝置最近 100 ms 的 RMS。裝置保持開著，換裝置或 stop_input_level 才關。
+#[tauri::command]
+pub async fn input_level(host: tauri::State<'_, Host>, device: String) -> Result<f32, String> {
+    let h = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut m = h.0.meter.lock().unwrap();
+        if m.as_ref().is_none_or(|(d, _)| *d != device) {
+            let mut a = MacAudio::new();
+            a.open(Some(&device)).map_err(|e| format!("開不了這支麥克風：{e:?}"))?;
+            *m = Some((device, a));
+        }
+        let a = &mut m.as_mut().unwrap().1;
+        a.flush();
+        let b = a.read_block().map_err(|e| format!("{e:?}"))?;
+        Ok(rms(&b))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn stop_input_level(host: tauri::State<Host>) {
+    *host.0.meter.lock().unwrap() = None;
+}
+
+/// 回 Claude CLI 版本；沒找到或沒登入回中文說明。
+#[tauri::command]
+pub async fn check_claude(host: tauri::State<'_, Host>) -> Result<String, String> {
+    let cfg = claude_cfg(&host.0.paths, &host.0.settings.lock().unwrap());
+    engine::claude::check(&cfg).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn check_voice() -> bool {
+    std::process::Command::new("say")
+        .args(["-v", "?"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("Meijia"))
+        .unwrap_or(false)
+}
+
+/// 試喊：10 秒內有一次通過兩關喚醒就回 true。測試期間引擎靜音，避免它也回應。
+#[tauri::command]
+pub async fn test_wake(host: tauri::State<'_, Host>) -> Result<bool, String> {
+    let h = host.inner().clone();
+    let was_muted = h.muted();
+    h.set_muted(true);
+    let r = tauri::async_runtime::spawn_blocking(move || {
+        let settings = h.0.settings.lock().unwrap().clone();
+        let models = h.0.paths.models();
+        let mut spotter = kws::Spotter::new(&models.join(KWS_DIR))?;
+        let small = asr::Whisper::new(&models.join(SMALL))?;
+        let mut a = MacAudio::new();
+        a.open(settings.input_device.as_deref()).map_err(|e| format!("{e:?}"))?;
+        let (mut agc, mut ring) = (Agc::default(), RingBuffer::new(3.9));
+        let mut read = |agc: &mut Agc, ring: &mut RingBuffer| -> Result<Vec<f32>, String> {
+            let g = agc.process(&a.read_block().map_err(|e| format!("{e:?}"))?);
+            ring.push(&g);
+            Ok(g)
+        };
+        for _ in 0..100 {
+            let g = read(&mut agc, &mut ring)?;
+            if spotter.accept(&g) {
+                for _ in 0..4 {
+                    read(&mut agc, &mut ring)?;
+                }
+                if engine::wake::verify_text(&small.transcribe(&ring.snapshot())?) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    host.set_muted(was_muted);
+    r
+}

@@ -146,6 +146,11 @@ impl ReminderStore {
 }
 
 /// 把筆記附加到 Markdown 檔：`## {標題或時間}\n\n{內容}\n\n`。
+/// 啟動時發現已過期的提醒。
+pub fn missed_message(r: &Reminder) -> String {
+    format!("你錯過了一個提醒：{}", r.text)
+}
+
 pub fn append_note(path: &Path, note: &Action, now: DateTime<FixedOffset>) -> io::Result<()> {
     let Action::Note { text, title } = note else {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "不是筆記"));
@@ -162,6 +167,12 @@ pub fn append_note(path: &Path, note: &Action, now: DateTime<FixedOffset>) -> io
 mod tests {
     use super::*;
     use chrono::DateTime;
+
+    #[test]
+    fn missed_message_names_the_reminder() {
+        let r = Reminder { id: "1".into(), at: DateTime::parse_from_rfc3339("2026-11-05T09:00:00+08:00").unwrap(), text: "開會".into() };
+        assert_eq!(missed_message(&r), "你錯過了一個提醒：開會");
+    }
 
     fn now() -> DateTime<FixedOffset> {
         DateTime::parse_from_rfc3339("2026-11-05T09:30:00+08:00").unwrap()

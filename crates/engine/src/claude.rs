@@ -222,6 +222,29 @@ impl Session {
     }
 }
 
+/// 健康檢查：回 CLI 版本號；沒登入回 NotLoggedIn。不花 token、不碰憑證——
+/// `auth status --json` 只讀 loggedIn，其他欄位（含 email）一律丟掉。
+pub async fn check(cfg: &ClaudeCfg) -> Result<String, ClaudeError> {
+    let run = |args: &'static [&'static str]| {
+        let mut c = Command::new(&cfg.bin);
+        c.args(args).current_dir(&cfg.workdir).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+        async move {
+            let out = tokio::time::timeout(Duration::from_secs(10), c.output())
+                .await
+                .map_err(|_| ClaudeError::Timeout)?
+                .map_err(spawn_err)?;
+            Ok::<_, ClaudeError>(String::from_utf8_lossy(&out.stdout).into_owned())
+        }
+    };
+    let ver = run(&["--version"]).await?;
+    let ver = ver.split_whitespace().next().ok_or(ClaudeError::Garbage)?.to_string();
+    let status: Value = serde_json::from_str(&run(&["auth", "status", "--json"]).await?).map_err(|_| ClaudeError::Garbage)?;
+    if status.get("loggedIn").and_then(Value::as_bool) != Some(true) {
+        return Err(ClaudeError::NotLoggedIn);
+    }
+    Ok(ver)
+}
+
 /// 單次查資料（sonnet、可上網），逾時就砍掉子程序。正式值用 LOOKUP_TIMEOUT。
 pub async fn lookup(cfg: &ClaudeCfg, q: &str, timeout: Duration) -> Result<String, ClaudeError> {
     let child = Command::new(&cfg.bin)

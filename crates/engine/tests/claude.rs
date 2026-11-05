@@ -144,3 +144,22 @@ fn errors_speak_chinese() {
     assert!(ClaudeError::NotLoggedIn.to_string().contains("登入"));
     assert!(ClaudeError::Crashed.to_string().contains("中斷"));
 }
+
+#[tokio::test]
+async fn check_reports_version_when_logged_in() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(check(&fake(t.path(), "ok")).await.unwrap(), "2.1.999");
+}
+
+#[tokio::test]
+async fn check_detects_not_logged_in() {
+    let t = tempfile::tempdir().unwrap();
+    assert!(matches!(check(&fake(t.path(), "nologin")).await, Err(ClaudeError::NotLoggedIn)));
+}
+
+#[tokio::test]
+async fn check_missing_binary() {
+    let t = tempfile::tempdir().unwrap();
+    let c = ClaudeCfg { bin: t.path().join("nope"), workdir: t.path().into(), read_dirs: vec![] };
+    assert!(matches!(check(&c).await, Err(ClaudeError::NotFound)));
+}

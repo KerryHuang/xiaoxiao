@@ -2,6 +2,12 @@
 # 測試用假 claude：行為由 FAKE_CLAUDE 決定。
 delta() { printf '{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"%s"}}}\n' "$1"; }
 result() { printf '{"type":"result","is_error":false,"result":"%s"}\n' "$1"; }
+# 健康檢查：--version 與 auth status 不看模式（nologin 除外）
+if [ "$1" = "--version" ]; then echo "2.1.999 (Claude Code)"; exit 0; fi
+if [ "$1" = "auth" ]; then
+  if [ "$FAKE_CLAUDE" = nologin ]; then echo '{"loggedIn":false}'; else echo '{"loggedIn":true,"email":"x@example.com"}'; fi
+  exit 0
+fi
 case "$FAKE_CLAUDE" in
   ok)
     while read -r _line; do delta "一公斤是"; delta "1000 公克。"; result "一公斤是1000 公克。"; done ;;

@@ -36,7 +36,7 @@ pub trait Notifier {
     fn notify(&self, title: &str, body: &str);
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct InputDevice {
     pub name: String,
     pub bluetooth: bool,

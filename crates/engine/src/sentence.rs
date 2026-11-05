@@ -43,3 +43,30 @@ mod tests {
         assert_eq!(s.finish(), Some("要不要".into()));
     }
 }
+
+/// whisper 對雜音常見的幻覺：影片字幕、片尾、括號裡的音效。命中就當沒聽到，不送去問 Claude。
+const JUNK: &[&str] = &["字幕製作", "字幕由", "字幕志願者", "請不吝", "點贊", "點讚", "訂閱我的頻道", "謝謝觀看", "感謝觀看", "感謝收看", "謝謝收看", "Amara"];
+
+pub fn is_junk_transcript(t: &str) -> bool {
+    let t = t.trim();
+    if !t.chars().any(char::is_alphanumeric) {
+        return true;
+    }
+    let bracketed = (t.starts_with('(') || t.starts_with('（') || t.starts_with('[')) && (t.ends_with(')') || t.ends_with('）') || t.ends_with(']'));
+    bracketed || JUNK.iter().any(|j| t.contains(j))
+}
+
+#[cfg(test)]
+mod junk_tests {
+    use super::is_junk_transcript;
+
+    #[test]
+    fn junk_transcripts_detected() {
+        for t in ["(字幕製作:貝爾)", "請不吝點贊 訂閱 轉發", "謝謝觀看", "（音樂）", "...", " "] {
+            assert!(is_junk_transcript(t), "{t}");
+        }
+        for t in ["現在幾點", "幫我記一下明天要買牛奶", "字幕要怎麼加"] {
+            assert!(!is_junk_transcript(t), "{t}");
+        }
+    }
+}

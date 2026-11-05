@@ -14,6 +14,10 @@ pub trait AudioSource: Send {
     fn read_block(&mut self) -> Result<Vec<f32>, AudioError>;
     /// 丟掉已經收進來、還沒讀的聲音（小小講完話後呼叫，避免聽到自己）。
     fn flush(&mut self) {}
+    /// 開的是系統預設輸入，而系統預設已經換成別的裝置（呼叫端應重開）。
+    fn default_changed(&self) -> bool {
+        false
+    }
     fn close(&mut self);
 }
 

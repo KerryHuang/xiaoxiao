@@ -21,6 +21,8 @@ export const saveSettings = (s: Settings) => invoke<void>("save_settings", { s }
 export const listInputs = () => invoke<InputDevice[]>("list_inputs");
 export const inputLevel = (device: string) => invoke<number>("input_level", { device });
 export const stopInputLevel = () => invoke<void>("stop_input_level");
+export type MicPermission = "authorized" | "denied" | "restricted" | "undetermined";
+export const micPermission = () => invoke<MicPermission>("mic_permission");
 export const checkClaude = () => invoke<string>("check_claude");
 export const checkVoice = () => invoke<boolean>("check_voice");
 export const testWake = () => invoke<boolean>("test_wake");

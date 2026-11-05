@@ -20,6 +20,8 @@ enum Kind {
     Speech,
     Wake,
     Echo,
+    /// 辦公室環境音：振幅 0.004 的白噪音
+    Noise,
 }
 
 enum Item {
@@ -42,6 +44,8 @@ struct World {
     chimes: usize,
     notes: Vec<(String, String)>,
     mic_in_use: bool,
+    default_changed: bool,
+    seed: u32,
 }
 
 type W = Arc<Mutex<World>>;
@@ -51,6 +55,7 @@ impl AudioSource for FakeAudio {
     fn open(&mut self, _d: Option<&str>) -> Result<(), AudioError> {
         let mut w = self.0.lock().unwrap();
         w.opens += 1;
+        w.default_changed = false;
         w.open_results.pop_front().unwrap_or(Ok(()))
     }
     fn read_block(&mut self) -> Result<Vec<f32>, AudioError> {
@@ -65,8 +70,19 @@ impl AudioSource for FakeAudio {
         if k == Kind::Echo {
             w.echo_returned += 1;
         }
+        if k == Kind::Noise {
+            let mut out = Vec::with_capacity(BLOCK);
+            for _ in 0..BLOCK {
+                w.seed = w.seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                out.push((w.seed as f32 / u32::MAX as f32 * 2.0 - 1.0) * 0.004);
+            }
+            return Ok(out);
+        }
         let v = if k == Kind::Silence { 0.0 } else { 0.3 };
         Ok(vec![v; BLOCK])
+    }
+    fn default_changed(&self) -> bool {
+        self.0.lock().unwrap().default_changed
     }
     fn flush(&mut self) {
         // 播放期間「收到」的回音要被丟掉
@@ -208,6 +224,8 @@ fn timing() -> Timing {
         followup_blocks: 30,
         claude_retry: Duration::from_secs(300),
         lookup_timeout: Duration::from_secs(5),
+        quick_first_token: Duration::from_secs(5),
+        quick_total: Duration::from_secs(10),
         poll: Duration::from_millis(5),
     }
 }
@@ -217,6 +235,16 @@ fn rig(mode: &str, setup: impl FnOnce(&mut World)) -> Rig {
 }
 
 fn rig_in(dir: tempfile::TempDir, mode: &str, setup: impl FnOnce(&mut World)) -> Rig {
+    rig_full(dir, mode, timing(), |_| {}, setup)
+}
+
+fn rig_full(
+    dir: tempfile::TempDir,
+    mode: &str,
+    timing: Timing,
+    tweak: impl FnOnce(&mut Settings),
+    setup: impl FnOnce(&mut World),
+) -> Rig {
     let w: W = Arc::new(Mutex::new(World::default()));
     setup(&mut w.lock().unwrap());
     let p = FakePlatform {
@@ -229,8 +257,9 @@ fn rig_in(dir: tempfile::TempDir, mode: &str, setup: impl FnOnce(&mut World)) ->
         claude: fake_claude(dir.path(), mode),
         dir: dir.path().to_path_buf(),
     };
-    let settings = Settings { notes_path: dir.path().join("notes.md"), ..Settings::default() };
-    let mut e = Engine::with_timing(p, settings, timing());
+    let mut settings = Settings { notes_path: dir.path().join("notes.md"), ..Settings::default() };
+    tweak(&mut settings);
+    let mut e = Engine::with_timing(p, settings, timing);
     let h = e.handle();
     let stop = Arc::new(AtomicBool::new(false));
     let s2 = stop.clone();
@@ -499,4 +528,105 @@ fn missed_reminder_notified_on_start() {
     assert_eq!(w.notes[0].1, "你錯過了一個提醒：繳電費");
     let s = fs::read_to_string(r.dir.path().join("reminders.json")).unwrap();
     assert!(!s.contains("繳電費") && s.contains("開會"), "過期的移除、未到期的保留：{s}");
+}
+
+#[test]
+fn office_noise_does_not_loop_followup() {
+    // 回答完進追問窗口（正式值 8 秒），問題的語音峰值擠出 AGC 窗口後增益拉滿；
+    // 雜音不能被當成追問、更不能把 whisper 的幻覺字串送去問 Claude。
+    let t = Timing { followup_blocks: 80, ..timing() };
+    let r = rig_full(tempfile::tempdir().unwrap(), "ok", t, |_| {}, |w| {
+        w.script.extend(n(Kind::Noise, 60));
+        w.script.extend(n(Kind::Wake, 1));
+        w.script.extend(n(Kind::Noise, 4));
+        w.script.extend(n(Kind::Speech, 5));
+        w.script.extend(n(Kind::Noise, 300));
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+        w.turbo.push_back("(字幕製作:貝爾)".into());
+        w.turbo.push_back("謝謝觀看".into());
+    });
+    r.wait("腳本跑完", |w, _| w.script.is_empty());
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(r.said(), ["我在", "一公斤是1000 公克。"]);
+    assert_eq!(r.h.state(), State::Idle);
+}
+
+#[test]
+fn followup_capped_without_wake() {
+    let r = rig("ok", |w| {
+        w.script.extend(wake_and_ask());
+        for _ in 0..4 {
+            w.script.extend(utterance());
+        }
+        w.small.push_back("嘿小小".into());
+        for q in ["一", "二", "三", "四", "五"] {
+            w.turbo.push_back(q.into());
+        }
+    });
+    r.wait("腳本跑完", |w, _| w.script.is_empty());
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(r.said().len(), 5, "連續追問最多 3 輪，之後要重新喊喚醒詞：{:?}", r.said());
+}
+
+#[test]
+fn diagnostic_logs_text_and_gain() {
+    let r = rig_full(tempfile::tempdir().unwrap(), "ok", timing(), |s| s.diagnostic = true, |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+    });
+    r.wait("回答完", |w, s| w.said.len() == 2 && s == State::Idle);
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.contains("\"text\":\"一公斤幾公克\""), "{log}");
+    assert!(log.contains("\"text\":\"嘿小小\""), "{log}");
+    assert!(log.contains("\"gain\""), "{log}");
+}
+
+#[test]
+fn no_text_logged_without_diagnostic() {
+    let r = rig("ok", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+    });
+    r.wait("回答完", |w, s| w.said.len() == 2 && s == State::Idle);
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(!log.contains("一公斤"), "{log}");
+}
+
+#[test]
+fn repeat_reminder_says_unsupported() {
+    let r = rig("action-repeat", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("每天早上九點提醒我開會".into());
+        w.turbo.push_back("對".into());
+    });
+    r.wait("複述", |w, s| w.said.len() == 2 && s == State::Confirming);
+    r.push(utterance());
+    r.wait("設好提醒", |w, _| w.said.len() == 3);
+    assert!(r.said()[2].contains("重複提醒還不支援"), "{:?}", r.said());
+    let s = fs::read_to_string(r.dir.path().join("reminders.json")).unwrap();
+    assert!(s.contains("開會"));
+}
+
+#[test]
+fn reopens_when_default_input_changes() {
+    let r = rig("ok", |_| {});
+    r.wait("待命", |w, s| s == State::Idle && w.opens == 1);
+    r.w.lock().unwrap().default_changed = true;
+    r.wait("改接新的預設輸入", |w, s| s == State::Idle && w.opens == 2);
+}
+
+#[test]
+fn stream_dead_reopens_without_waiting_for_check() {
+    let t = Timing { pause_check: Duration::from_secs(60), ..timing() };
+    let r = rig_full(tempfile::tempdir().unwrap(), "ok", t, |_| {}, |w| {
+        w.script.push_back(Item::Gone);
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+    });
+    r.wait("立刻重開照常喚醒", |w, _| w.said.len() == 2);
 }

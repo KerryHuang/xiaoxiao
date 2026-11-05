@@ -67,6 +67,39 @@ impl Agc {
     }
 }
 
+/// 判斷一塊是不是有人在講話：增益後超過 SPEECH_RMS，而且比雜訊底高約 10 dB。
+/// 雜訊底取增益前最近 5 秒區塊 RMS 的第 20 百分位——增益跳動時不會跟著變，
+/// 所以 AGC 把環境音拉大也不會被當成說話。
+#[derive(Default)]
+pub struct SpeechDetector {
+    win: VecDeque<f32>,
+}
+
+const FLOOR_FACTOR: f32 = 3.0;
+/// 剛開麥克風時，先累積這麼多塊（0.5 秒）估雜訊底，期間一律當沒講話。
+const FLOOR_WARMUP: usize = 5;
+
+impl SpeechDetector {
+    pub fn push(&mut self, raw: &[f32], gain: f32) -> bool {
+        let r = rms(raw);
+        let speech = self.win.len() >= FLOOR_WARMUP && r * gain > SPEECH_RMS && r > self.floor() * FLOOR_FACTOR;
+        if self.win.len() == AGC_WINDOW {
+            self.win.pop_front();
+        }
+        self.win.push_back(r);
+        speech
+    }
+
+    pub fn floor(&self) -> f32 {
+        if self.win.is_empty() {
+            return 0.0;
+        }
+        let mut v: Vec<f32> = self.win.iter().copied().collect();
+        v.sort_by(f32::total_cmp);
+        v[v.len() / 5]
+    }
+}
+
 pub fn rms(block: &[f32]) -> f32 {
     if block.is_empty() {
         return 0.0;
@@ -94,10 +127,11 @@ impl Endpointer {
     pub fn new() -> Self {
         Self { audio: Vec::new(), blocks: 0, spoke: false, silent: 0 }
     }
-    pub fn push(&mut self, gained: &[f32]) -> EndpointEvent {
+    /// `speech`：這塊有沒有人講話（由 SpeechDetector 判斷）。
+    pub fn push(&mut self, gained: &[f32], speech: bool) -> EndpointEvent {
         self.audio.extend_from_slice(gained);
         self.blocks += 1;
-        if rms(gained) > SPEECH_RMS {
+        if speech {
             self.spoke = true;
             self.silent = 0;
         } else {
@@ -180,10 +214,10 @@ mod tests {
     fn endpointer_done_after_pause() {
         let mut e = Endpointer::new();
         for _ in 0..10 {
-            assert!(matches!(e.push(&sine(0.5, BLOCK)), EndpointEvent::Continue));
+            assert!(matches!(e.push(&sine(0.5, BLOCK), true), EndpointEvent::Continue));
         }
         for i in 0..8 {
-            let ev = e.push(&vec![0.0; BLOCK]);
+            let ev = e.push(&vec![0.0; BLOCK], false);
             if i < 7 {
                 assert!(matches!(ev, EndpointEvent::Continue));
             } else {
@@ -196,18 +230,57 @@ mod tests {
     fn endpointer_gives_up_without_speech() {
         let mut e = Endpointer::new();
         for _ in 0..59 {
-            assert!(matches!(e.push(&vec![0.0; BLOCK]), EndpointEvent::Continue));
+            assert!(matches!(e.push(&vec![0.0; BLOCK], false), EndpointEvent::Continue));
         }
-        assert!(matches!(e.push(&vec![0.0; BLOCK]), EndpointEvent::NoSpeech));
+        assert!(matches!(e.push(&vec![0.0; BLOCK], false), EndpointEvent::NoSpeech));
     }
 
     #[test]
     fn endpointer_caps_at_10s() {
         let mut e = Endpointer::new();
         for _ in 0..99 {
-            assert!(matches!(e.push(&sine(0.5, BLOCK)), EndpointEvent::Continue));
+            assert!(matches!(e.push(&sine(0.5, BLOCK), true), EndpointEvent::Continue));
         }
-        assert!(matches!(e.push(&sine(0.5, BLOCK)), EndpointEvent::TooLong(ref a) if a.len() == 100 * BLOCK));
+        assert!(matches!(e.push(&sine(0.5, BLOCK), true), EndpointEvent::TooLong(ref a) if a.len() == 100 * BLOCK));
+    }
+
+    fn noise(amp: f32, n: usize, seed: &mut u32) -> Vec<f32> {
+        (0..n)
+            .map(|_| {
+                *seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (*seed as f32 / u32::MAX as f32 * 2.0 - 1.0) * amp
+            })
+            .collect()
+    }
+
+    #[test]
+    fn noise_at_max_gain_is_not_speech() {
+        let (mut a, mut d) = (Agc::default(), SpeechDetector::default());
+        let mut seed = 1;
+        let mut hits = 0;
+        for _ in 0..100 {
+            let b = noise(0.004, BLOCK, &mut seed);
+            a.process(&b);
+            if d.push(&b, a.gain()) {
+                hits += 1;
+            }
+        }
+        assert!((a.gain() - 30.0).abs() < 1e-3);
+        assert_eq!(hits, 0, "增益拉滿後的雜音不能算說話");
+    }
+
+    #[test]
+    fn speech_over_noise_is_speech() {
+        let (mut a, mut d) = (Agc::default(), SpeechDetector::default());
+        let mut seed = 1;
+        for _ in 0..60 {
+            let b = noise(0.004, BLOCK, &mut seed);
+            a.process(&b);
+            d.push(&b, a.gain());
+        }
+        let b = sine(0.05, BLOCK);
+        a.process(&b);
+        assert!(d.push(&b, a.gain()));
     }
 
     #[test]

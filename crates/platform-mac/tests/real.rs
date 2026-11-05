@@ -72,3 +72,12 @@ fn speaker_says_meijia() {
     // 小音量，避免在辦公室吵到人
     MacSpeaker.say("[[volm 0.05]]測試").unwrap();
 }
+
+#[test]
+#[ignore]
+fn default_unchanged_right_after_open() {
+    let mut a = MacAudio::new();
+    a.open(None).unwrap();
+    assert!(!a.default_changed());
+    a.close();
+}

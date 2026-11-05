@@ -13,6 +13,9 @@ use crate::prompts::lookup_prompt;
 
 pub const IDLE_RESET: Duration = Duration::from_secs(5 * 60);
 pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(30);
+/// 快答等第一段文字的上限、整個回答的上限；超過就砍掉程序回 Timeout，引擎不會卡住。
+pub const FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(15);
+pub const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 查資料讀本機檔案時一律排除。
 const SECRET_PATTERNS: &[&str] = &[
@@ -118,7 +121,11 @@ pub fn lookup_args(cfg: &ClaudeCfg, question: &str) -> Vec<String> {
         a.push("--disallowedTools".into());
         for p in SECRET_PATTERNS {
             for t in ["Read", "Grep", "Glob"] {
-                a.push(format!("{t}(**/{p})"));
+                // 絕對路徑規則（// 開頭）綁在每個加入的資料夾上；**/ 開頭只相對 cwd，比對不到 --add-dir
+                for d in &cfg.read_dirs {
+                    let d = d.to_string_lossy();
+                    a.push(format!("{t}(/{}/**/{p})", d.trim_end_matches('/')));
+                }
             }
         }
     }
@@ -151,11 +158,26 @@ pub struct Session {
     args: Vec<String>,
     proc: Option<Proc>,
     last: Instant,
+    first_token: Duration,
+    total: Duration,
 }
 
 impl Session {
     pub fn new(cfg: ClaudeCfg, model: &str, system_prompt: &str) -> Session {
-        Session { cfg, args: session_args(model, system_prompt), proc: None, last: Instant::now() }
+        Session {
+            cfg,
+            args: session_args(model, system_prompt),
+            proc: None,
+            last: Instant::now(),
+            first_token: FIRST_TOKEN_TIMEOUT,
+            total: ANSWER_TIMEOUT,
+        }
+    }
+
+    pub fn with_timeouts(mut self, first_token: Duration, total: Duration) -> Session {
+        self.first_token = first_token;
+        self.total = total;
+        self
     }
 
     pub fn idle_for(&self) -> Duration {
@@ -185,7 +207,8 @@ impl Session {
         if self.proc.is_none() {
             self.proc = Some(self.spawn()?);
         }
-        let r = Self::exchange(self.proc.as_mut().unwrap(), text, &mut on_delta).await;
+        let (first, total) = (self.first_token, self.total);
+        let r = Self::exchange(self.proc.as_mut().unwrap(), text, &mut on_delta, first, total).await;
         if r.is_err() {
             self.proc = None;
         }
@@ -193,13 +216,24 @@ impl Session {
         r
     }
 
-    async fn exchange(p: &mut Proc, text: &str, on_delta: &mut impl FnMut(&str)) -> Result<String, ClaudeError> {
+    async fn exchange(
+        p: &mut Proc,
+        text: &str,
+        on_delta: &mut impl FnMut(&str),
+        first_token: Duration,
+        total: Duration,
+    ) -> Result<String, ClaudeError> {
+        let start = tokio::time::Instant::now();
         let msg = serde_json::json!({"type": "user", "message": {"role": "user", "content": text}});
         let line = format!("{msg}\n");
         p.stdin.write_all(line.as_bytes()).await.map_err(|_| ClaudeError::Crashed)?;
         p.stdin.flush().await.map_err(|_| ClaudeError::Crashed)?;
         let mut acc = String::new();
-        while let Some(l) = p.lines.next_line().await.map_err(|_| ClaudeError::Crashed)? {
+        loop {
+            // 還沒拿到第一段文字時用較短的期限；逾時由呼叫端丟掉程序（kill_on_drop）
+            let limit = if acc.is_empty() { first_token.min(total) } else { total };
+            let next = tokio::time::timeout_at(start + limit, p.lines.next_line()).await.map_err(|_| ClaudeError::Timeout)?;
+            let Some(l) = next.map_err(|_| ClaudeError::Crashed)? else { break };
             let Ok(v) = serde_json::from_str::<Value>(&l) else { continue }; // 非 JSON 行略過
             match v.get("type").and_then(Value::as_str) {
                 Some("stream_event") => {

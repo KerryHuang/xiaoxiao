@@ -25,6 +25,8 @@ struct Running {
     rate: u32,
     pending: Vec<f32>,
     name: String,
+    /// 開的時候沒指定裝置（跟著系統預設走）。
+    follows_default: bool,
 }
 
 pub struct MacAudio {
@@ -125,7 +127,7 @@ impl AudioSource for MacAudio {
         let n = name.clone();
         let thread = std::thread::spawn(move || spawn_stream(n, tx, stop_rx, ready_tx));
         let rate = ready_rx.recv().map_err(|_| AudioError::Other("收音執行緒結束".into()))??;
-        self.run = Some(Running { rx, stop: stop_tx, thread: Some(thread), rate, pending: vec![], name });
+        self.run = Some(Running { rx, stop: stop_tx, thread: Some(thread), rate, pending: vec![], name, follows_default: device.is_none() });
         Ok(())
     }
 
@@ -148,6 +150,13 @@ impl AudioSource for MacAudio {
         if let Some(r) = self.run.as_mut() {
             while r.rx.try_recv().is_ok() {}
             r.pending.clear();
+        }
+    }
+
+    fn default_changed(&self) -> bool {
+        match &self.run {
+            Some(r) if r.follows_default => choose(None).is_ok_and(|n| n != r.name),
+            _ => false,
         }
     }
 

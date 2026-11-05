@@ -67,9 +67,11 @@ fn lookup_args_with_dir_excludes_secrets() {
     let a = lookup_args(&cfg(vec!["/tmp/docs".into()]), "q");
     assert!(a.windows(2).any(|w| w == ["--add-dir", "/tmp/docs"]));
     assert!(a.windows(2).any(|w| w == ["--tools", "Read,Grep,Glob,WebSearch"]));
-    assert!(a.iter().any(|x| x.contains("Read(**/.env*)")));
-    assert!(a.iter().any(|x| x.contains("Grep(**/.ssh/")));
-    assert!(a.iter().any(|x| x.contains("Glob(**/Library/Keychains/")));
+    // 規則要用絕對路徑（// 開頭）綁在加入的資料夾上；**/ 開頭只相對 cwd，比對不到 --add-dir
+    assert!(a.iter().any(|x| x == "Read(//tmp/docs/**/.env*)"), "{a:?}");
+    assert!(a.iter().any(|x| x.starts_with("Grep(//tmp/docs/**/.ssh/")));
+    assert!(a.iter().any(|x| x.starts_with("Glob(//tmp/docs/**/Library/Keychains/")));
+    assert!(!a.iter().any(|x| x.contains("(**/")));
 }
 
 #[tokio::test]
@@ -162,4 +164,13 @@ async fn check_missing_binary() {
     let t = tempfile::tempdir().unwrap();
     let c = ClaudeCfg { bin: t.path().join("nope"), workdir: t.path().into(), read_dirs: vec![] };
     assert!(matches!(check(&c).await, Err(ClaudeError::NotFound)));
+}
+
+#[tokio::test]
+async fn session_times_out_waiting_first_token() {
+    let t = tempfile::tempdir().unwrap();
+    let mut s = Session::new(fake(t.path(), "slow"), "haiku", "SP").with_timeouts(Duration::from_millis(500), Duration::from_secs(5));
+    let t0 = Instant::now();
+    assert!(matches!(s.ask("q", |_| {}).await, Err(ClaudeError::Timeout)));
+    assert!(t0.elapsed() < Duration::from_secs(3));
 }

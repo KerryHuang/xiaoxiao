@@ -7,6 +7,7 @@ import {
   h,
   inputLevel,
   listInputs,
+  micPermission,
   saveSettings,
   stopInputLevel,
   testWake,
@@ -75,8 +76,15 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
               const devs = await listInputs();
               const d = devs.find((x) => !x.bluetooth);
               if (!d) throw new Error("找不到可用的麥克風");
-              await inputLevel(d.name);
+              // 開一次麥克風讓系統跳出詢問；被拒時 CoreAudio 不報錯，所以要另外問授權狀態
+              if ((await micPermission()) === "undetermined") await inputLevel(d.name);
+              let p = await micPermission();
+              for (let i = 0; p === "undetermined" && i < 120; i++) {
+                await new Promise((r) => setTimeout(r, 500));
+                p = await micPermission();
+              }
               await stopInputLevel();
+              if (p !== "authorized") throw new Error(p === "undetermined" ? "還沒有回應系統的詢問" : "麥克風權限被關閉");
               pass(1);
             } catch (e) {
               msg.textContent = `沒有成功：${e}。可到「系統設定 → 隱私權與安全性 → 麥克風」打開小小。`;

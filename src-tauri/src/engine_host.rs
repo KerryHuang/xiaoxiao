@@ -237,7 +237,9 @@ impl Host {
     pub fn restart(&self) {
         let me = self.clone();
         std::thread::spawn(move || {
-            if let Some(old) = me.0.running.lock().unwrap().take() {
+            // 先取出再放鎖：join 期間 shutdown() 還要拿這把鎖，持鎖 join 會讓主執行緒卡住
+            let old = me.0.running.lock().unwrap().take();
+            if let Some(old) = old {
                 old.stop.store(true, Ordering::SeqCst);
                 let _ = old.thread.join();
             }
@@ -380,6 +382,17 @@ pub async fn input_level(host: tauri::State<'_, Host>, device: String) -> Result
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 麥克風授權狀態：authorized／denied／restricted／undetermined。
+#[tauri::command]
+pub fn mic_permission() -> &'static str {
+    match platform_mac::mic_permission() {
+        platform_mac::MicPermission::Authorized => "authorized",
+        platform_mac::MicPermission::Denied => "denied",
+        platform_mac::MicPermission::Restricted => "restricted",
+        platform_mac::MicPermission::NotDetermined => "undetermined",
+    }
 }
 
 #[tauri::command]

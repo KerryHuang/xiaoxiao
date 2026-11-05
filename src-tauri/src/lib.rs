@@ -44,6 +44,7 @@ pub fn run() {
             engine_host::list_inputs,
             engine_host::input_level,
             engine_host::stop_input_level,
+            engine_host::mic_permission,
             engine_host::check_claude,
             engine_host::check_voice,
             engine_host::test_wake,

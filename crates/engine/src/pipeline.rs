@@ -8,7 +8,7 @@ use chrono::{DateTime, Datelike, FixedOffset, Timelike};
 use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
-use crate::audio::{Agc, EndpointEvent, Endpointer, RingBuffer, SPEECH_RMS, rms};
+use crate::audio::{Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
 use crate::events::EventLog;
@@ -17,7 +17,7 @@ use crate::pause::should_pause;
 use crate::platform::*;
 use crate::prompts::{confirm_prompt, quick_prompt};
 use crate::router::{Route, route_prefix};
-use crate::sentence::SentenceSplitter;
+use crate::sentence::{SentenceSplitter, is_junk_transcript};
 use crate::wake::verify_text;
 
 pub const DEGRADED_MSG: &str = "現在連不上 Claude，我只能報時和計時";
@@ -25,6 +25,10 @@ pub const DEGRADED_MSG: &str = "現在連不上 Claude，我只能報時和計�
 const TAIL_BLOCKS: usize = 4;
 /// 複核用的錄音長度：命中前 3.5 秒＋命中後 0.4 秒。
 const VERIFY_SECS: f32 = 3.9;
+/// 追問窗口內要連續這麼多塊（0.3 秒）有人講話才算開口。
+const ONSET_BLOCKS: usize = 3;
+/// 不喊喚醒詞最多連開幾次追問窗口；之後要重新喊「嘿，小小」。
+const MAX_FOLLOWUP_WINDOWS: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -53,6 +57,9 @@ pub struct Timing {
     pub followup_blocks: usize,
     pub claude_retry: Duration,
     pub lookup_timeout: Duration,
+    /// 快答：等第一段文字最多多久、整個回答最多多久。
+    pub quick_first_token: Duration,
+    pub quick_total: Duration,
     pub poll: Duration,
 }
 
@@ -63,6 +70,8 @@ impl Default for Timing {
             followup_blocks: 80, // 8 秒
             claude_retry: Duration::from_secs(5 * 60),
             lookup_timeout: crate::claude::LOOKUP_TIMEOUT,
+            quick_first_token: crate::claude::FIRST_TOKEN_TIMEOUT,
+            quick_total: crate::claude::ANSWER_TIMEOUT,
             poll: Duration::from_millis(100),
         }
     }
@@ -133,6 +142,11 @@ pub struct Engine<P: Platform> {
     log: EventLog,
     store: ReminderStore,
     agc: Agc,
+    vad: SpeechDetector,
+    /// 最近讀到的那一塊有沒有人講話。
+    speech: bool,
+    onset: Vec<Vec<f32>>,
+    followups: u32,
     ring: RingBuffer,
     ep: Option<Endpointer>,
     window_left: usize,
@@ -168,6 +182,10 @@ impl<P: Platform> Engine<P> {
             log,
             store,
             agc: Agc::default(),
+            vad: SpeechDetector::default(),
+            speech: false,
+            onset: vec![],
+            followups: 0,
             ring: RingBuffer::new(VERIFY_SECS),
             ep: None,
             window_left: 0,
@@ -206,6 +224,7 @@ impl<P: Platform> Engine<P> {
     /// 待命：降級中顯示 Degraded，否則 Idle。
     fn to_idle(&mut self) {
         self.ep = None;
+        self.onset.clear();
         self.confirm = None;
         self.set_state(if self.degraded_at.is_some() { State::Degraded } else { State::Idle });
     }
@@ -250,6 +269,7 @@ impl<P: Platform> Engine<P> {
         match self.p.audio().open(dev.as_deref()) {
             Ok(()) => {
                 self.agc = Agc::default();
+                self.vad = SpeechDetector::default();
                 self.ring.clear();
                 self.p.spotter().reset();
                 self.to_idle();
@@ -261,11 +281,13 @@ impl<P: Platform> Engine<P> {
         }
     }
 
-    /// 讀一塊並做 AGC；串流失效就關掉、進 NoMic，由 check_pause 每 2 秒重試。
+    /// 讀一塊並做 AGC 與說話判斷；串流失效就關掉並立刻重開一次，
+    /// 重開失敗才進 NoMic，由 check_pause 每 2 秒重試。
     fn read(&mut self) -> Option<Vec<f32>> {
         match self.p.audio().read_block() {
             Ok(b) => {
                 let g = self.agc.process(&b);
+                self.speech = self.vad.push(&b, self.agc.gain());
                 self.ring.push(&g);
                 Some(g)
             }
@@ -274,7 +296,7 @@ impl<P: Platform> Engine<P> {
                 self.p.audio().close();
                 self.ep = None;
                 self.confirm = None;
-                self.set_state(State::NoMic);
+                self.open_audio();
                 None
             }
         }
@@ -291,6 +313,13 @@ impl<P: Platform> Engine<P> {
             self.confirm = None;
             self.set_state(State::Paused);
         } else if !want && matches!(s, State::Paused | State::NoMic) {
+            self.open_audio();
+        } else if matches!(s, State::Idle | State::Degraded)
+            && self.settings.input_device.is_none()
+            && self.p.audio().default_changed()
+        {
+            // 使用者改了系統預設輸入：待命時才換，不打斷對話
+            self.p.audio().close();
             self.open_audio();
         }
     }
@@ -324,10 +353,18 @@ impl<P: Platform> Engine<P> {
             State::FollowUp | State::Confirming => {
                 if self.ep.is_some() {
                     self.listen(&g);
-                } else if rms(&g) > SPEECH_RMS {
-                    self.ep = Some(Endpointer::new()); // 窗口內開口：不用喚醒詞
-                    self.listen(&g);
+                } else if self.speech {
+                    // 窗口內開口：不用喚醒詞，但要連續講 0.3 秒才算，避免一聲雜音就觸發
+                    self.onset.push(g);
+                    if self.onset.len() >= ONSET_BLOCKS {
+                        self.log.log("followup", json!({"gain": self.agc.gain()}));
+                        self.ep = Some(Endpointer::new());
+                        for b in std::mem::take(&mut self.onset) {
+                            self.listen(&b);
+                        }
+                    }
                 } else {
+                    self.onset.clear();
                     self.window_left = self.window_left.saturating_sub(1);
                     if self.window_left == 0 {
                         self.to_idle();
@@ -345,8 +382,12 @@ impl<P: Platform> Engine<P> {
             }
         }
         let t0 = Instant::now();
-        let ok = self.p.verifier().transcribe(&self.ring.snapshot()).map(|t| verify_text(&t)).unwrap_or(false);
-        self.log.log("wake", json!({"ok": ok, "latency_ms": t0.elapsed().as_millis() as u64}));
+        let text = self.p.verifier().transcribe(&self.ring.snapshot()).unwrap_or_default();
+        let ok = verify_text(&text);
+        self.log.log(
+            "wake",
+            json!({"ok": ok, "latency_ms": t0.elapsed().as_millis() as u64, "gain": self.agc.gain(), "text": text}),
+        );
         if ok {
             self.ack();
         } else {
@@ -356,6 +397,7 @@ impl<P: Platform> Engine<P> {
 
     /// 「叮」＋「我在」→ 開始聽問題。
     fn ack(&mut self) {
+        self.followups = 0;
         self.set_state(State::Acking);
         self.p.speaker().chime();
         let _ = self.p.speaker().say("我在");
@@ -378,14 +420,21 @@ impl<P: Platform> Engine<P> {
     }
 
     fn open_window(&mut self, s: State) {
+        if s == State::FollowUp {
+            if self.followups >= MAX_FOLLOWUP_WINDOWS {
+                return self.to_idle();
+            }
+            self.followups += 1;
+        }
         self.ep = None;
+        self.onset.clear();
         self.window_left = self.timing.followup_blocks;
         self.set_state(s);
     }
 
     fn listen(&mut self, g: &[f32]) {
         let Some(ep) = self.ep.as_mut() else { return };
-        let audio = match ep.push(g) {
+        let audio = match ep.push(g, self.speech) {
             EndpointEvent::Continue => return,
             EndpointEvent::NoSpeech => {
                 self.to_idle();
@@ -396,8 +445,13 @@ impl<P: Platform> Engine<P> {
         self.ep = None;
         let confirming = self.state() == State::Confirming;
         self.set_state(State::Thinking);
+        let t0 = Instant::now();
         let text = self.p.transcriber().transcribe(&audio).unwrap_or_default();
-        if text.is_empty() {
+        self.log.log(
+            "asr",
+            json!({"latency_ms": t0.elapsed().as_millis() as u64, "gain": self.agc.gain(), "text": text}),
+        );
+        if text.is_empty() || is_junk_transcript(&text) {
             self.to_idle();
         } else if confirming {
             self.confirm_turn(&text);
@@ -451,7 +505,11 @@ impl<P: Platform> Engine<P> {
     fn quick_answer(&mut self, text: &str) {
         let cfg = self.p.claude();
         let now = self.p.now();
-        let mut sess = self.quick.take().unwrap_or_else(|| Session::new(cfg.clone(), "haiku", &quick_prompt(now)));
+        let (first, total) = (self.timing.quick_first_token, self.timing.quick_total);
+        let mut sess = self
+            .quick
+            .take()
+            .unwrap_or_else(|| Session::new(cfg.clone(), "haiku", &quick_prompt(now)).with_timeouts(first, total));
         let mut buf = String::new();
         let mut route = None;
         let mut split = SentenceSplitter::default();
@@ -523,7 +581,7 @@ impl<P: Platform> Engine<P> {
                 }
             }
             Route::Action => {
-                self.confirm = Some(Session::new(cfg, "haiku", &confirm_prompt(now)));
+                self.confirm = Some(Session::new(cfg, "haiku", &confirm_prompt(now)).with_timeouts(first, total));
                 self.confirm_turn(text);
             }
         }
@@ -564,11 +622,12 @@ impl<P: Platform> Engine<P> {
 
     fn execute(&mut self, a: Action, now: DateTime<FixedOffset>) -> Result<String, String> {
         match a {
-            Action::Reminder { at, text, .. } => {
+            Action::Reminder { at, text, repeat } => {
                 let r = Reminder { id: format!("{}", now.timestamp_nanos_opt().unwrap_or_default()), at, text };
                 self.store.add(&r).map_err(|e| format!("提醒沒有存起來：{e}"))?;
                 self.reminders.push(r);
-                Ok("提醒設好了".into())
+                // 重複提醒還沒做：明說只設了一次，不靜默少做
+                Ok(if repeat.is_some() { "提醒設好了。重複提醒還不支援，先幫你設這一次".into() } else { "提醒設好了".into() })
             }
             Action::Timer { secs, .. } => {
                 self.timers.push(Timer { at: now + chrono::Duration::seconds(secs as i64) });

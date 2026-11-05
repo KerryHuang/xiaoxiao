@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pefile
 
+sys.stdout.reconfigure(encoding="utf-8")  # Windows runner 預設 cp1252，印中文會崩潰
+
 VC_RUNTIME = re.compile(r"^(vcruntime|msvcp|concrt|vcomp|vccorlib|mfc)", re.I)
 
 folder = Path(sys.argv[1])

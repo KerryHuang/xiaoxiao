@@ -6,3 +6,5 @@ pub mod router;
 pub mod sentence;
 pub mod action;
 pub mod audio;
+pub mod platform;
+pub mod wake;

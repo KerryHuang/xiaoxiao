@@ -1,0 +1,34 @@
+{
+  "sherpa_onnx_version": "2.0.1",
+  "files": [
+    {
+      "name": "kws-zh-en",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2",
+      "sha256": "68447f4fbc67e70eee3a93961f36e81e98f47aef73ce7e7ca00885c6cd3616a6",
+      "extract_to": "kws",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "whisper-small",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+      "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+      "save_as": "ggml-small.bin",
+      "license": "MIT"
+    },
+    {
+      "name": "whisper-turbo-q5",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+      "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+      "save_as": "ggml-large-v3-turbo-q5_0.bin",
+      "license": "MIT"
+    },
+    {
+      "name": "sherpa-onnx-lib-macos-arm64",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-osx-arm64-shared-no-tts-lib.tar.bz2",
+      "sha256": "ac5594ad237db56ec4a6c4b3fc48700441b33a07bb71c235f35530a52a93f2e3",
+      "extract_to": "sherpa-onnx-lib",
+      "license": "Apache-2.0",
+      "dev_only": true
+    }
+  ]
+}

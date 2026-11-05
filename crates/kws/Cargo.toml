@@ -1,0 +1,11 @@
+[package]
+name = "kws"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+engine = { path = "../engine" }
+
+[dev-dependencies]
+hound = "3"

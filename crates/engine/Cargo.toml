@@ -13,3 +13,10 @@ tokio = { version = "1", features = ["process", "io-util", "time", "rt", "macros
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+# 只給測試用；這是相依套件的 bin，不會被打包進 app。
+[[bin]]
+name = "fake-claude"
+path = "tests/fixtures/fake_claude.rs"
+test = false
+doc = false

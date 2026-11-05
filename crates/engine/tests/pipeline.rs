@@ -1,7 +1,6 @@
 //! 主狀態機：全部用假實作。
 use std::collections::VecDeque;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -198,15 +197,9 @@ impl Platform for FakePlatform {
 }
 
 fn fake_claude(dir: &Path, mode: &str) -> ClaudeCfg {
-    let real = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-claude.sh");
-    let w = dir.join("claude");
-    let out = dir.join("claude-args.txt");
-    fs::write(
-        &w,
-        format!("#!/bin/sh\nFAKE_CLAUDE={mode} FAKE_ARGS_OUT='{}' exec '{}' \"$@\"\n", out.display(), real.display()),
-    )
-    .unwrap();
-    fs::set_permissions(&w, fs::Permissions::from_mode(0o755)).unwrap();
+    let w = dir.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(env!("CARGO_BIN_EXE_fake-claude"), &w).unwrap();
+    fs::write(dir.join("fake-mode.txt"), format!("{mode}\n{}\n", dir.join("claude-args.txt").display())).unwrap();
     ClaudeCfg { bin: w, workdir: dir.to_path_buf(), read_dirs: vec![] }
 }
 

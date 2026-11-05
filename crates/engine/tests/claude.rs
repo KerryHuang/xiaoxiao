@@ -1,6 +1,5 @@
 use engine::claude::*;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -8,13 +7,16 @@ fn cfg(read_dirs: Vec<PathBuf>) -> ClaudeCfg {
     ClaudeCfg { bin: PathBuf::from("claude"), workdir: std::env::temp_dir(), read_dirs }
 }
 
-/// 每個測試各自包一層 wrapper 設好 FAKE_CLAUDE，避免平行測試互改環境變數。
-fn fake(dir: &Path, mode: &str) -> ClaudeCfg {
-    let real = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-claude.sh");
-    let w = dir.join("claude");
-    fs::write(&w, format!("#!/bin/sh\nFAKE_CLAUDE={mode} exec '{}' \"$@\"\n", real.display())).unwrap();
-    fs::set_permissions(&w, fs::Permissions::from_mode(0o755)).unwrap();
+/// 每個測試各自一份假 claude，模式寫在執行檔旁邊，避免平行測試互改環境變數。
+fn fake_with_out(dir: &Path, mode: &str, out: &Path) -> ClaudeCfg {
+    let w = dir.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(env!("CARGO_BIN_EXE_fake-claude"), &w).unwrap();
+    fs::write(dir.join("fake-mode.txt"), format!("{mode}\n{}\n", out.display())).unwrap();
     ClaudeCfg { bin: w, workdir: dir.to_path_buf(), read_dirs: vec![] }
+}
+
+fn fake(dir: &Path, mode: &str) -> ClaudeCfg {
+    fake_with_out(dir, mode, &dir.join("claude-args.txt"))
 }
 
 fn mk_desktop(root: &Path, ver: &str, hash: &str) -> PathBuf {
@@ -131,11 +133,8 @@ async fn lookup_times_out() {
 #[tokio::test]
 async fn lookup_returns_result() {
     let t = tempfile::tempdir().unwrap();
-    let mut c = fake(t.path(), "args");
     let out = t.path().join("args.txt");
-    let w = fs::read_to_string(&c.bin).unwrap().replace("exec", &format!("FAKE_ARGS_OUT='{}' exec", out.display()));
-    fs::write(&c.bin, w).unwrap();
-    c.read_dirs = vec![];
+    let c = fake_with_out(t.path(), "args", &out);
     assert_eq!(lookup(&c, "今天新聞", LOOKUP_TIMEOUT).await.unwrap(), "ok");
     let args = fs::read_to_string(out).unwrap();
     assert!(args.lines().any(|l| l == "今天新聞"));

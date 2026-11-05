@@ -1,0 +1,12 @@
+[package]
+name = "asr"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+engine = { path = "../engine" }
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[dev-dependencies]
+hound = "3"

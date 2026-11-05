@@ -29,3 +29,17 @@ jobs:
 
       - name: 測試
         run: cargo test --workspace --exclude xiaoxiao
+
+      - name: 編好真機測試程式，讓測試機不用裝編譯器
+        shell: bash
+        run: |
+          exe=$(cargo test -p platform-windows --test real --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .executable != null) | .executable')
+          mkdir real-tests
+          cp "$exe" real-tests/real.exe
+          cp target/debug/examples/hold_mic.exe real-tests/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-tests
+          path: real-tests

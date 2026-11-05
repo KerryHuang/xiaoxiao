@@ -3024,6 +3024,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "platform-windows"
+version = "0.1.0"
+dependencies = [
+ "audio-cpal",
+ "engine",
+ "tempfile",
+ "windows",
+]
+
+[[package]]
 name = "plist"
 version = "1.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

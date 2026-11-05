@@ -1,0 +1,21 @@
+[package]
+name = "platform-windows"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+engine = { path = "../engine" }
+
+[target.'cfg(windows)'.dependencies]
+audio-cpal = { path = "../audio-cpal" }
+windows = { version = "0.62", features = [
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_Media_Audio",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+
+[dev-dependencies]
+tempfile = "3"

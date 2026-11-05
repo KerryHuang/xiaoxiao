@@ -1,7 +1,7 @@
 # 安裝小小
 
 支援 Mac（Apple 晶片、macOS 13 以上）與 Windows（x64 的 Windows 10／11，CPU 要支援 AVX2，約 2013 年之後的機型）。
-Windows 版在這裡：[安裝小小（Windows）](#windows)。
+Windows 版在這裡：[安裝小小（Windows）](#windows)。裝好之後怎麼用，見[操作手冊](manual.md)。
 
 ## 事前準備
 
@@ -74,7 +74,7 @@ Windows 版在這裡：[安裝小小（Windows）](#windows)。
 
 ## Mac：移除
 
-1. 在選單列點小小 →「結束小小」。
+1. 在選單列對小小按右鍵 →「結束小小」。
 2. 把「應用程式」裡的 xiaoxiao 丟到垃圾桶。
 3. 刪除設定、模型與紀錄（要保留設定就跳過）：
    ```bash

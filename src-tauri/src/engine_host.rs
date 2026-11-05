@@ -48,7 +48,7 @@ impl MacPlatform {
     fn load(app: &AppHandle, paths: &Paths, settings: &Settings) -> Result<MacPlatform, String> {
         let models = paths.models();
         Ok(MacPlatform {
-            audio: MacAudio::new(),
+            audio: platform_mac::new_audio(),
             spotter: kws::Spotter::new(&models.join(KWS_DIR))?,
             small: asr::Whisper::new(&models.join(SMALL))?,
             turbo: asr::Whisper::new(&models.join(TURBO))?,
@@ -371,7 +371,7 @@ pub async fn input_level(host: tauri::State<'_, Host>, device: String) -> Result
     tauri::async_runtime::spawn_blocking(move || {
         let mut m = h.0.meter.lock().unwrap();
         if m.as_ref().is_none_or(|(d, _)| *d != device) {
-            let mut a = MacAudio::new();
+            let mut a = platform_mac::new_audio();
             a.open(Some(&device)).map_err(|e| format!("開不了這支麥克風：{e:?}"))?;
             *m = Some((device, a));
         }
@@ -427,7 +427,7 @@ pub async fn test_wake(host: tauri::State<'_, Host>) -> Result<bool, String> {
         let models = h.0.paths.models();
         let mut spotter = kws::Spotter::new(&models.join(KWS_DIR))?;
         let small = asr::Whisper::new(&models.join(SMALL))?;
-        let mut a = MacAudio::new();
+        let mut a = platform_mac::new_audio();
         a.open(settings.input_device.as_deref()).map_err(|e| format!("{e:?}"))?;
         let (mut agc, mut ring) = (Agc::default(), RingBuffer::new(3.9));
         let mut read = |agc: &mut Agc, ring: &mut RingBuffer| -> Result<Vec<f32>, String> {

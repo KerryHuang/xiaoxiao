@@ -8,4 +8,4 @@ license = "MIT"
 engine = { path = "../engine" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cpal = "0.18"
+audio-cpal = { path = "../audio-cpal" }

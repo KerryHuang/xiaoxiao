@@ -8,7 +8,7 @@ mod permission;
 mod screen;
 mod speaker;
 
-pub use audio::MacAudio;
+pub use audio::{MacAudio, new_audio};
 pub use devices::MacDevices;
 pub use micusage::MacMicUsage;
 pub use permission::{MicPermission, mic_permission};

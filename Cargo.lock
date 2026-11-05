@@ -239,6 +239,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "audio-cpal"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "engine",
+]
+
+[[package]]
 name = "auto-launch"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3011,7 +3019,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "platform-mac"
 version = "0.1.0"
 dependencies = [
- "cpal",
+ "audio-cpal",
  "engine",
 ]
 

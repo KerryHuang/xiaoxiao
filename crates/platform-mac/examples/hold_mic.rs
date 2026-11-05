@@ -3,7 +3,7 @@
 fn main() {
     use engine::platform::AudioSource;
     let secs: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(4);
-    let mut a = platform_mac::MacAudio::new();
+    let mut a = platform_mac::new_audio();
     a.open(None).expect("開麥克風");
     for _ in 0..secs * 10 {
         a.read_block().expect("讀聲音");

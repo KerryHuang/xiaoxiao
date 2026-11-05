@@ -24,7 +24,7 @@ fn micusage_sees_other_process() {
 #[test]
 #[ignore]
 fn micusage_ignores_self() {
-    let mut a = MacAudio::new();
+    let mut a = new_audio();
     a.open(None).unwrap();
     a.read_block().unwrap();
     assert!(!MacMicUsage::new().others_using_mic());
@@ -34,7 +34,7 @@ fn micusage_ignores_self() {
 #[test]
 #[ignore]
 fn audio_reads_16k_blocks() {
-    let mut a = MacAudio::new();
+    let mut a = new_audio();
     a.open(None).unwrap();
     for _ in 0..5 {
         assert_eq!(a.read_block().unwrap().len(), BLOCK);
@@ -45,7 +45,7 @@ fn audio_reads_16k_blocks() {
 #[test]
 #[ignore]
 fn audio_never_picks_bluetooth_by_default() {
-    let mut a = MacAudio::new();
+    let mut a = new_audio();
     a.open(None).unwrap();
     let name = a.device_name().unwrap().to_string();
     let d = MacDevices.inputs().into_iter().find(|d| d.name == name).unwrap();
@@ -77,7 +77,7 @@ fn speaker_says_meijia() {
 #[test]
 #[ignore]
 fn default_unchanged_right_after_open() {
-    let mut a = MacAudio::new();
+    let mut a = new_audio();
     a.open(None).unwrap();
     assert!(!a.default_changed());
     a.close();

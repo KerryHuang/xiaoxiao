@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p src-tauri/win-runtime
-          for f in vcruntime140 vcruntime140_1 msvcp140; do
+          for f in vcruntime140 vcruntime140_1 msvcp140 msvcp140_1; do
             cp "$SYSTEMROOT/System32/$f.dll" src-tauri/win-runtime/
           done
 
@@ -60,7 +60,7 @@ jobs:
           $setup = Get-Item target/release/bundle/nsis/*-setup.exe
           Start-Process $setup.FullName -ArgumentList '/S' -Wait
           $dir = "$env:LOCALAPPDATA\xiaoxiao"
-          foreach ($f in 'xiaoxiao.exe','sherpa-onnx-c-api.dll','onnxruntime.dll','onnxruntime_providers_shared.dll','vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll') {
+          foreach ($f in 'xiaoxiao.exe','sherpa-onnx-c-api.dll','onnxruntime.dll','onnxruntime_providers_shared.dll','vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll','msvcp140_1.dll') {
             if (-not (Test-Path "$dir\$f")) { throw "安裝目錄缺 $f" }
           }
           python -m pip install --quiet pefile

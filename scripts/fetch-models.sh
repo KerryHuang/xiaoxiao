@@ -2,16 +2,22 @@
 # 下載模型與 sherpa-onnx 函式庫到 models/，並對照 models/manifest.json 的 SHA256。
 # 用法：scripts/fetch-models.sh            下載缺的檔案並驗證
 #       scripts/fetch-models.sh --pin      第一次使用：把算出的 SHA256 寫回 manifest
+#       scripts/fetch-models.sh --only <名稱>  只抓清單裡的這一項（CI 打包只需要 sherpa-onnx-lib-macos-arm64）
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PIN="${1:-}"
-python3 - "$PIN" <<'PY'
+python3 - "$@" <<'PY'
 import hashlib, json, os, subprocess, sys, tarfile, urllib.request
-pin = sys.argv[1] == "--pin"
+args = sys.argv[1:]
+pin = "--pin" in args
+only = args[args.index("--only") + 1] if "--only" in args else None
 mf_path = "models/manifest.json"
 mf = json.load(open(mf_path, encoding="utf-8"))
+if only and not any(f["name"] == only for f in mf["files"]):
+    sys.exit(f"清單裡沒有 {only}")
 os.makedirs("models/.downloads", exist_ok=True)
 for f in mf["files"]:
+    if only and f["name"] != only:
+        continue
     fname = f["url"].rsplit("/", 1)[-1]
     dl = os.path.join("models/.downloads", fname)
     if not os.path.exists(dl):

@@ -1,0 +1,50 @@
+# 推 v* tag（例如 v0.1.0）時：跑測試 → 打包 Mac .dmg → 建立 GitHub Release 並附上安裝檔。
+# Windows 版平台層完成後再加一個 windows job。
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14 # Apple 晶片
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 確認 tag 與 app 版本一致
+        run: |
+          app=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          [ "${GITHUB_REF_NAME}" = "v${app}" ] || { echo "tag ${GITHUB_REF_NAME} 與 tauri.conf.json 版本 ${app} 不符"; exit 1; }
+
+      - name: Rust（依 rust-toolchain.toml）
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: 下載 sherpa-onnx 函式庫（語音模型由 app 第一次開啟時下載，這裡不抓）
+        run: scripts/fetch-models.sh --only sherpa-onnx-lib-macos-arm64
+
+      - name: 測試
+        run: cargo test --workspace
+
+      - name: 打包
+        run: |
+          bun install --frozen-lockfile
+          bun tauri build
+
+      - name: 驗證簽章
+        run: codesign -v --deep --strict target/release/bundle/macos/xiaoxiao.app
+
+      - name: 建立 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" target/release/bundle/dmg/*.dmg \
+            --title "小小 ${GITHUB_REF_NAME}" \
+            --notes "Mac 版（Apple 晶片、macOS 13 以上）。未經 Apple 公證，第一次打開請照 docs/install.md 略過警告。尚未提供 Windows 版。"

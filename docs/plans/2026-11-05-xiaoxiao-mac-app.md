@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - 介面、語音、提示詞、錯誤訊息一律繁體中文；程式碼識別字用英文。
-- 公開 repo：不得出現公司名稱、客戶名稱、內網位址、個人路徑（`/Users/<名字>`）；提交前 `git grep -nE '/Users/|C:\\\\Users\\\\'` 必須是空的。
+- 公開 repo：不得出現公司名稱、客戶名稱、內網位址、個人路徑（`/Users/<名字>`）；提交前 `git grep -nE '/Users/[A-Za-z0-9]|C:\\\\Users\\\\[A-Za-z0-9]' -- ':!docs/plans'` 必須是空的。
 - 喚醒前的聲音只放在記憶體，最近 3.5 秒，不斷覆蓋；**任何音訊都不落檔、不外送**。送到雲端的只有問題的文字。
 - 紀錄檔只記事件，不記轉錄內容；診斷模式要手動開。
 - app 不得自建 Claude 登入，也不得讀取或保存 Claude token。
@@ -581,7 +581,7 @@ fn now() -> DateTime<FixedOffset> { DateTime::parse_from_rfc3339("2026-11-05T09:
 - [ ] **Step 2：Run** → FAIL　**Step 3：實作**（引導第 1 步前先下載模型，畫面顯示進度）　**Step 4：Run** → PASS
 - [ ] **Step 5：打包**：`bun tauri build` 產生 `.dmg`（不簽章）。在乾淨的使用者帳號上安裝：拖進「應用程式」，右鍵→打開略過 Gatekeeper，走完引導，快捷鍵問「現在幾點」能回答。
 - [ ] **Step 6：文件**：`docs/install.md`（下載、略過未簽章警告、引導步驟、怎麼移除）；`docs/voice-acceptance.md` 抄錄設計 §11 第 3 點的驗收項目，附紀錄表格；README 加上安裝連結與「尚未在 Windows 上提供」。
-- [ ] **Step 7：驗證**：`cargo test --workspace`、`cargo test --workspace -- --ignored`、`git grep -nE '/Users/|C:\\\\Users\\\\'` 為空。
+- [ ] **Step 7：驗證**：`cargo test --workspace`、`cargo test --workspace -- --ignored`、`git grep -nE '/Users/[A-Za-z0-9]|C:\\\\Users\\\\[A-Za-z0-9]' -- ':!docs/plans'` 為空。
 - [ ] **Step 8：Commit** `feat: 模型下載與 Mac 打包`
 
 ---

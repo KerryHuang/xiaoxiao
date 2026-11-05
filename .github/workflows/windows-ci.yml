@@ -1,9 +1,9 @@
-# Windows 版開發中的回饋：push windows 分支或手動觸發時編譯、測試、打包，安裝檔放在 artifact。
+# push main、windows 分支或手動觸發時編譯、測試、打包 Windows 版，安裝檔放在 artifact。
 name: windows-ci
 
 on:
   push:
-    branches: [windows]
+    branches: [main, windows]
   workflow_dispatch:
 
 jobs:

@@ -140,6 +140,22 @@ fn secret_rules_use_posix_form_for_windows_paths() {
 }
 
 #[test]
+fn network_folders_get_no_read_access() {
+    // 規則比對不到網路路徑：給了讀取權，.env 就擋不住，所以寧可不給
+    for unc in [r"\\server\share\docs", "//server/share/docs"] {
+        let a = lookup_args(&cfg(vec![unc.into()]), "q");
+        assert!(!a.iter().any(|x| x == "--add-dir"), "{a:?}");
+        assert!(!a.iter().any(|x| x.starts_with("Read")), "{a:?}");
+        assert!(a.windows(2).any(|w| w == ["--tools", "WebSearch"]), "{a:?}");
+    }
+    // 本機資料夾不受影響
+    let a = lookup_args(&cfg(vec![r"\\server\share".into(), r"C:\Users\me\docs".into()]), "q");
+    assert!(a.windows(2).any(|w| w == ["--add-dir", r"C:\Users\me\docs"]), "{a:?}");
+    assert_eq!(a.iter().filter(|x| *x == "--add-dir").count(), 1, "{a:?}");
+    assert!(!a.iter().any(|x| x.contains("server")), "{a:?}");
+}
+
+#[test]
 fn posix_abs_keeps_unix_paths() {
     assert_eq!(posix_abs("/tmp/docs/"), "/tmp/docs");
     assert_eq!(posix_abs(r"D:\a b\c"), "/d/a b/c");

@@ -61,6 +61,12 @@ pub fn counts(active: bool, pid: u32, system_sounds: bool, me: u32) -> bool {
     active && !system_sounds && pid != me
 }
 
+/// 逐一看工作階段，每筆是（使用中、PID、系統音效）。讀取失敗的跳過：
+/// 工作階段隨時會消失，不能因為一筆壞掉就漏掉同一端點上正在進行的通話。
+pub fn any_session_counts<E>(sessions: impl IntoIterator<Item = Result<(bool, u32, bool), E>>, me: u32) -> bool {
+    sessions.into_iter().flatten().any(|(active, pid, system_sounds)| counts(active, pid, system_sounds, me))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,6 +93,14 @@ mod tests {
         assert!(!counts(true, 7, false, 7)); // 自己
         assert!(!counts(false, 42, false, 7));
         assert!(!counts(true, 42, true, 7)); // 系統音效工作階段
+    }
+
+    #[test]
+    fn one_broken_session_does_not_hide_a_call() {
+        // 剛掛斷的工作階段讀取失敗，同一端點上還有另一個通話
+        assert!(any_session_counts([Err("gone"), Ok((true, 42, false))], 7));
+        assert!(!any_session_counts([Err("gone"), Ok((true, 7, false))], 7));
+        assert!(!any_session_counts::<&str>([], 7));
     }
 
     #[test]

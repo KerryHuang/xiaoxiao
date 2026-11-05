@@ -88,6 +88,11 @@ pub fn posix_abs(dir: &str) -> String {
     s.trim_end_matches('/').to_string()
 }
 
+/// 網路路徑（`\\\\server\\share`）。沒驗過 Claude Code 怎麼比對它們，秘密檔規則可能失效，所以不給讀取權。
+pub fn is_network_path(dir: &str) -> bool {
+    dir.starts_with(r"\\") || dir.starts_with("//")
+}
+
 /// Windows 上不要替 claude 開主控台視窗（否則每次回答都會跳出黑視窗）。
 pub fn quiet(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
@@ -139,21 +144,22 @@ pub fn lookup_args(cfg: &ClaudeCfg, question: &str) -> Vec<String> {
         .collect();
     a.extend(LOCKDOWN.iter().map(|s| s.to_string()));
     a.push("--strict-mcp-config".into());
-    if cfg.read_dirs.is_empty() {
+    let dirs: Vec<String> = cfg.read_dirs.iter().map(|d| d.to_string_lossy().into_owned()).filter(|d| !is_network_path(d)).collect();
+    if dirs.is_empty() {
         a.extend(["--tools", "WebSearch", "--allowedTools", "WebSearch"].map(String::from));
     } else {
         let tools = "Read,Grep,Glob,WebSearch";
         a.extend(["--tools", tools, "--allowedTools", tools].map(String::from));
-        for d in &cfg.read_dirs {
+        for d in &dirs {
             a.push("--add-dir".into());
-            a.push(d.to_string_lossy().into_owned());
+            a.push(d.clone());
         }
         a.push("--disallowedTools".into());
         for p in SECRET_PATTERNS {
             for t in ["Read", "Grep", "Glob"] {
                 // 絕對路徑規則（// 開頭）綁在每個加入的資料夾上；**/ 開頭只相對 cwd，比對不到 --add-dir
-                for d in &cfg.read_dirs {
-                    a.push(format!("{t}(/{}/**/{p})", posix_abs(&d.to_string_lossy())));
+                for d in &dirs {
+                    a.push(format!("{t}(/{}/**/{p})", posix_abs(d)));
                 }
             }
         }

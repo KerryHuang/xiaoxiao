@@ -64,6 +64,13 @@ impl Settings {
         std::fs::rename(&tmp, path).map_err(|e| e.to_string())
     }
 
+    /// 預設的筆記檔改放到系統真正的「文件」資料夾（Windows 可能被 OneDrive 搬走）；使用者選過的不動。
+    pub fn use_documents_dir(&mut self, docs: &Path) {
+        if self.notes_path == Settings::default().notes_path {
+            self.notes_path = docs.join("小小筆記.md");
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         match self.engine {
             EngineKind::ClaudeCli => Ok(()),
@@ -91,6 +98,18 @@ mod tests {
         s2.read_dirs.push("/tmp/docs".into());
         s2.save(&t.path().join("sub/settings.json")).unwrap();
         assert_eq!(Settings::load(&t.path().join("sub/settings.json")).unwrap(), s2);
+    }
+
+    #[test]
+    fn default_notes_follow_the_real_documents_folder() {
+        let docs = Path::new("/somewhere/OneDrive/文件");
+        let mut s = Settings::default();
+        s.use_documents_dir(docs);
+        assert_eq!(s.notes_path, docs.join("小小筆記.md"));
+
+        let mut custom = Settings { notes_path: "/my/notes.md".into(), ..Settings::default() };
+        custom.use_documents_dir(docs);
+        assert_eq!(custom.notes_path, PathBuf::from("/my/notes.md"), "使用者選過的位置不動");
     }
 
     #[test]

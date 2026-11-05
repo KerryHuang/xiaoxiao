@@ -41,7 +41,12 @@ export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboardi
     class: "ghost",
     onclick: async () => {
       const picked = await open({ directory: true, multiple: false });
-      if (typeof picked === "string" && !s.read_dirs.includes(picked)) {
+      if (typeof picked !== "string") return;
+      if (picked.startsWith("\\\\") || picked.startsWith("//")) {
+        status.textContent = "還不支援網路資料夾：無法確保金鑰和 .env 不被讀取。";
+        return;
+      }
+      if (!s.read_dirs.includes(picked)) {
         s.read_dirs.push(picked);
         drawDirs();
       }

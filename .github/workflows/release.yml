@@ -1,9 +1,11 @@
 # 推 v* tag（例如 v0.2.0）時：兩個平台各自跑測試與打包，都成功才建立 GitHub Release。
+# 手動觸發是演練：整條跑完，只差不建立 Release。
 name: release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,6 +17,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 確認 tag 與 app 版本一致
+        if: github.event_name == 'push'
         run: |
           app=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
           [ "${GITHUB_REF_NAME}" = "v${app}" ] || { echo "tag ${GITHUB_REF_NAME} 與 tauri.conf.json 版本 ${app} 不符"; exit 1; }
@@ -62,7 +65,13 @@ jobs:
           name: windows-installer
           path: dist
 
+      - name: 確認兩個平台的安裝檔都在
+        run: |
+          ls -l dist
+          ls dist/*.dmg dist/*-setup.exe
+
       - name: 建立 Release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

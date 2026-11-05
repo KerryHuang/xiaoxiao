@@ -9,7 +9,7 @@ use windows::core::{Interface, Result};
 
 use crate::com::Com;
 use crate::devices::enumerator;
-use crate::logic::counts;
+use crate::logic::any_session_counts;
 
 pub struct WinMicUsage {
     me: u32,
@@ -31,14 +31,11 @@ fn device_in_use(d: &IMMDevice, me: u32) -> Result<bool> {
     unsafe {
         let mgr: IAudioSessionManager2 = d.Activate(CLSCTX_ALL, None)?;
         let sessions = mgr.GetSessionEnumerator()?;
-        for i in 0..sessions.GetCount()? {
+        let read = |i| -> Result<(bool, u32, bool)> {
             let s: IAudioSessionControl2 = sessions.GetSession(i)?.cast()?;
-            let active = s.GetState()? == AudioSessionStateActive;
-            if counts(active, s.GetProcessId().unwrap_or(0), s.IsSystemSoundsSession() == S_OK, me) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+            Ok((s.GetState()? == AudioSessionStateActive, s.GetProcessId().unwrap_or(0), s.IsSystemSoundsSession() == S_OK))
+        };
+        Ok(any_session_counts((0..sessions.GetCount()?).map(read), me))
     }
 }
 

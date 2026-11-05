@@ -193,10 +193,13 @@ pub struct Host(Arc<Inner>);
 impl Host {
     pub fn new(app: &AppHandle) -> Result<Host, String> {
         let paths = Paths::new(app)?;
-        let settings = Settings::load(&paths.settings).unwrap_or_else(|e| {
+        let mut settings = Settings::load(&paths.settings).unwrap_or_else(|e| {
             eprintln!("{e}，改用預設設定");
             Settings::default()
         });
+        if let Ok(docs) = app.path().document_dir() {
+            settings.use_documents_dir(&docs);
+        }
         Ok(Host(Arc::new(Inner {
             app: app.clone(),
             paths,

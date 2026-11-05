@@ -1,5 +1,4 @@
-# 推 v* tag（例如 v0.1.0）時：跑測試 → 打包 Mac .dmg → 建立 GitHub Release 並附上安裝檔。
-# Windows 版平台層完成後再加一個 windows job。
+# 推 v* tag（例如 v0.2.0）時：兩個平台各自跑測試與打包，都成功才建立 GitHub Release。
 name: release
 
 on:
@@ -41,10 +40,33 @@ jobs:
       - name: 驗證簽章
         run: codesign -v --deep --strict target/release/bundle/macos/xiaoxiao.app
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: target/release/bundle/dmg/*.dmg
+
+  windows:
+    uses: ./.github/workflows/windows-build.yml
+
+  release:
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: dist
+
       - name: 建立 Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" target/release/bundle/dmg/*.dmg \
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
             --title "小小 ${GITHUB_REF_NAME}" \
-            --notes "Mac 版（Apple 晶片、macOS 13 以上）。未經 Apple 公證，第一次打開請照 docs/install.md 略過警告。尚未提供 Windows 版。"
+            --notes "Mac 版（Apple 晶片、macOS 13 以上）與 Windows 版（x64、Windows 10／11）。都沒有商業簽章，第一次打開請照 docs/install.md 略過系統警告。"

@@ -1,4 +1,4 @@
-# Windows 版開發中的回饋：push windows 分支或手動觸發時，在 Windows 上編譯與測試。
+# Windows 版開發中的回饋：push windows 分支或手動觸發時編譯、測試、打包，安裝檔放在 artifact。
 name: windows-ci
 
 on:
@@ -8,38 +8,4 @@ on:
 
 jobs:
   windows:
-    runs-on: windows-latest
-    env:
-      # 不依建置機 CPU 最佳化：CI 機器有 AVX-512，編出來的程式到一般電腦會當掉
-      GGML_NATIVE: "OFF"
-      GGML_AVX: "ON"
-      GGML_AVX2: "ON"
-      GGML_BMI2: "ON"
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust（依 rust-toolchain.toml）
-        run: rustup show
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: 下載 sherpa-onnx 函式庫
-        shell: bash
-        run: scripts/fetch-models.sh --only sherpa-onnx-lib-windows-x64
-
-      - name: 測試
-        run: cargo test --workspace
-
-      - name: 編好真機測試程式，讓測試機不用裝編譯器
-        shell: bash
-        run: |
-          exe=$(cargo test -p platform-windows --test real --no-run --message-format=json \
-            | jq -r 'select(.profile.test == true and .executable != null) | .executable')
-          mkdir real-tests
-          cp "$exe" real-tests/real.exe
-          cp target/debug/examples/hold_mic.exe real-tests/ 2>/dev/null || true
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: real-tests
-          path: real-tests
+    uses: ./.github/workflows/windows-build.yml

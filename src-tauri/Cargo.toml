@@ -1,6 +1,6 @@
 [package]
 name = "xiaoxiao"
-version = "0.1.0"
+version = "0.2.0"
 description = "日常語音助理小小"
 authors = ["Kerry Huang"]
 edition = "2024"

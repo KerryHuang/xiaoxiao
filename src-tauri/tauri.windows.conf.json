@@ -1,0 +1,19 @@
+{
+  "bundle": {
+    "targets": ["nsis"],
+    "resources": {
+      "../models/sherpa-onnx-lib/lib/sherpa-onnx-c-api.dll": "sherpa-onnx-c-api.dll",
+      "../models/sherpa-onnx-lib/lib/onnxruntime.dll": "onnxruntime.dll",
+      "../models/sherpa-onnx-lib/lib/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll",
+      "win-runtime/vcruntime140.dll": "vcruntime140.dll",
+      "win-runtime/vcruntime140_1.dll": "vcruntime140_1.dll",
+      "win-runtime/msvcp140.dll": "msvcp140.dll"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["TradChinese"]
+      }
+    }
+  }
+}

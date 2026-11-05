@@ -1,0 +1,82 @@
+# Windows 的編譯、測試與打包；windows-ci（開發中）與 release（發版）共用。
+name: windows-build
+
+on:
+  workflow_call:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      # 不依建置機 CPU 最佳化：CI 機器有 AVX-512，編出來的程式到一般電腦會當掉
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_BMI2: "ON"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust（依 rust-toolchain.toml）
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: 下載 sherpa-onnx 函式庫（語音模型由 app 第一次開啟時下載，這裡不抓）
+        shell: bash
+        run: scripts/fetch-models.sh --only sherpa-onnx-lib-windows-x64
+
+      # tauri-build 編譯時就會檢查資源檔，所以要在測試之前
+      - name: 複製 VC++ runtime，讓乾淨的電腦也能啟動
+        shell: bash
+        run: |
+          mkdir -p src-tauri/win-runtime
+          for f in vcruntime140 vcruntime140_1 msvcp140; do
+            cp "$SYSTEMROOT/System32/$f.dll" src-tauri/win-runtime/
+          done
+
+      - name: 測試
+        run: cargo test --workspace
+
+      - name: 編好真機測試程式，讓測試機不用裝編譯器
+        shell: bash
+        run: |
+          exe=$(cargo test -p platform-windows --test real --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .executable != null) | .executable')
+          mkdir real-tests
+          cp "$exe" real-tests/real.exe
+          cp target/debug/examples/hold_mic.exe real-tests/ 2>/dev/null || true
+
+      - name: 打包
+        shell: bash
+        run: |
+          bun install --frozen-lockfile
+          bun tauri build
+
+      - name: 冒煙測試：靜默安裝、檢查檔案、啟動
+        shell: pwsh
+        run: |
+          $setup = Get-Item target/release/bundle/nsis/*-setup.exe
+          Start-Process $setup.FullName -ArgumentList '/S' -Wait
+          $dir = "$env:LOCALAPPDATA\xiaoxiao"
+          foreach ($f in 'xiaoxiao.exe','sherpa-onnx-c-api.dll','onnxruntime.dll','onnxruntime_providers_shared.dll','vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll') {
+            if (-not (Test-Path "$dir\$f")) { throw "安裝目錄缺 $f" }
+          }
+          python -m pip install --quiet pefile
+          python scripts/check-windows-deps.py $dir
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $p = Start-Process "$dir\xiaoxiao.exe" -PassThru
+          Start-Sleep 15
+          if ($p.HasExited) { throw "小小啟動後結束了，代碼 $($p.ExitCode)" }
+          Stop-Process -Id $p.Id
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-tests
+          path: real-tests
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: target/release/bundle/nsis/*-setup.exe

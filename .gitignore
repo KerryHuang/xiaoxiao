@@ -8,6 +8,7 @@ recordings/
 node_modules/
 dist/
 src-tauri/gen/schemas
+src-tauri/win-runtime/
 # 模型（只提交清單）
 models/*
 !models/manifest.json

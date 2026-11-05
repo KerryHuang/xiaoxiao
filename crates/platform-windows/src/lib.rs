@@ -10,9 +10,13 @@ mod devices;
 #[cfg(windows)]
 mod micusage;
 #[cfg(windows)]
+mod paths;
+#[cfg(windows)]
 mod permission;
 #[cfg(windows)]
 mod screen;
+#[cfg(windows)]
+mod speaker;
 
 #[cfg(windows)]
 pub use audio::{WinAudio, new_audio};
@@ -26,3 +30,7 @@ pub use micusage::WinMicUsage;
 pub use permission::mic_permission;
 #[cfg(windows)]
 pub use screen::WinScreen;
+#[cfg(windows)]
+pub use paths::short_path;
+#[cfg(windows)]
+pub use speaker::{WinSpeaker, voice_ok};

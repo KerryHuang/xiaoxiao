@@ -2,7 +2,7 @@
 //! `real.exe --ignored --test-threads=1`
 #![cfg(windows)]
 use engine::audio::BLOCK;
-use engine::platform::{AudioSource, Devices, MicUsage, ScreenState};
+use engine::platform::{AudioSource, Devices, MicUsage, ScreenState, Speaker};
 use platform_windows::*;
 use std::process::Command;
 use std::time::Duration;
@@ -86,4 +86,15 @@ fn default_unchanged_right_after_open() {
     a.open(None).unwrap();
     assert!(!a.default_changed());
     a.close();
+}
+
+#[test]
+#[ignore]
+fn speaker_says_taiwanese() {
+    assert!(voice_ok(), "沒有台灣語音");
+    let t = std::time::Instant::now();
+    WinSpeaker.say("測試").unwrap();
+    assert!(t.elapsed() > Duration::from_millis(200), "應該說完才回傳");
+    WinSpeaker.chime();
+    std::thread::sleep(Duration::from_millis(800));
 }

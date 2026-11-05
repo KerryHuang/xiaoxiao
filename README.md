@@ -54,6 +54,7 @@
 - [語音實測紀錄](docs/voice-acceptance.md)
 - [設計文件](docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md)
 - [桌面小角色與休息模式設計](docs/specs/2026-11-05-xiaoxiao-desktop-character-design.md)
+- [語音助理做好了，我卻要它學會真的關麥克風](https://kerry-notes.kh-lab.workers.dev/posts/xiaoxiao-voice-assistant/)：這個專案的製作過程
 
 ## 開發
 

@@ -11,6 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -19,6 +20,23 @@
         "height": 680,
         "visible": false,
         "resizable": true
+      },
+      {
+        "label": "character",
+        "title": "小小",
+        "url": "character.html",
+        "width": 96,
+        "height": 96,
+        "visible": false,
+        "resizable": false,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "acceptFirstMouse": true,
+        "visibleOnAllWorkspaces": true
       }
     ],
     "security": {

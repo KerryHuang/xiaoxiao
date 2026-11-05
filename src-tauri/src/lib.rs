@@ -1,3 +1,4 @@
+mod character;
 mod engine_host;
 mod models;
 mod os;
@@ -29,12 +30,13 @@ pub fn run() {
             }
             let host = engine_host::Host::new(app.handle())?;
             app.manage(host.clone());
+            app.manage(character::CharacterState::default());
             tray::build(app.handle())?;
             host.restart();
             Ok(())
         })
         .on_window_event(|w, e| {
-            // 關設定視窗只是藏起來，小小繼續在選單列待命
+            // 關設定視窗只是藏起來，小小繼續待命
             if let WindowEvent::CloseRequested { api, .. } = e {
                 api.prevent_close();
                 let _ = w.hide();
@@ -51,6 +53,7 @@ pub fn run() {
             engine_host::check_claude,
             engine_host::check_voice,
             engine_host::test_wake,
+            character::character_state,
         ])
         .run(tauri::generate_context!())
         .expect("小小啟動失敗");

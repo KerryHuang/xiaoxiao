@@ -10,6 +10,12 @@ export default defineConfig(() => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  // 兩個視窗各一頁：設定與引導、桌面小角色
+  build: {
+    rollupOptions: {
+      input: ["index.html", "character.html"],
+    },
+  },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,

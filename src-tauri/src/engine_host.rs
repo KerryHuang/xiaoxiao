@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+use crate::character;
 use crate::os::{self, OsAudio, OsDevices, OsMicUsage, OsScreen, OsSpeaker};
 use crate::tray;
 
@@ -229,6 +230,10 @@ impl Host {
         }
     }
 
+    pub fn settings(&self) -> Settings {
+        self.0.settings.lock().unwrap().clone()
+    }
+
     pub fn claude_bin(&self) -> PathBuf {
         claude_cfg(&self.0.paths, &self.0.settings.lock().unwrap()).bin
     }
@@ -268,37 +273,58 @@ impl Host {
             show_window(&self.0.app);
             return;
         }
+        let a = &self.0.app;
+        // 模型載入可能要十幾秒，角色先出來，讓使用者知道小小有打開
+        character::on_loading(a, "載入中…");
+        character::sync(a);
         if let Err(e) = settings.validate() {
-            tray::show_problem(&self.0.app, &format!("回答引擎{e}"));
+            self.problem(&format!("回答引擎{e}"));
             return;
         }
-        let app = self.0.app.clone();
+        let app = a.clone();
         if let Err(e) = self.0.paths.ensure_models(move |d, t| {
             if t > 0 && d % (t / 100).max(1) < 65_536 {
-                tray::show_problem(&app, &format!("下載模型中…{}%", d * 100 / t));
+                let msg = format!("下載模型中…{}%", d * 100 / t);
+                tray::show_problem(&app, &msg);
+                character::on_loading(&app, &msg);
             }
         }) {
-            tray::show_problem(&self.0.app, &format!("模型下載失敗：{e}"));
+            self.problem(&format!("模型下載失敗：{e}"));
             return;
         }
-        tray::show_problem(&self.0.app, "載入中…");
-        let p = match OsPlatform::load(&self.0.app, &self.0.paths, &settings) {
+        tray::show_problem(a, "載入中…");
+        character::on_loading(a, "載入中…");
+        let p = match OsPlatform::load(a, &self.0.paths, &settings) {
             Ok(p) => p,
             Err(e) => {
-                tray::show_problem(&self.0.app, &format!("無法啟動：{e}"));
+                self.problem(&format!("無法啟動：{e}"));
                 return;
             }
         };
         let mut engine = Engine::new(p, settings);
         let h = engine.handle();
         h.set_resting(self.0.resting_carry.load(Ordering::SeqCst));
-        let app = self.0.app.clone();
-        h.set_on_state(Box::new(move |s| tray::show_state(&app, s)));
-        let app = self.0.app.clone();
-        h.set_on_pause(Box::new(move |p| tray::show_rest(&app, p == Some(PauseReason::Rest))));
-        tray::show_state(&self.0.app, h.state());
+        let app = a.clone();
+        h.set_on_state(Box::new(move |s| {
+            tray::show_state(&app, s);
+            character::on_state(&app, s);
+        }));
+        let app = a.clone();
+        h.set_on_pause(Box::new(move |p| {
+            tray::show_rest(&app, p == Some(PauseReason::Rest));
+            character::on_pause(&app, p);
+        }));
+        tray::show_state(a, h.state());
+        character::on_state(a, h.state());
         *self.0.handle.lock().unwrap() = Some(h);
+        // 新引擎從「沒有暫停」開始算，舊引擎留下的原因要清掉；還在通話的話引擎馬上會再通知
+        character::on_pause(a, None);
         engine.run(stop);
+    }
+
+    fn problem(&self, msg: &str) {
+        tray::show_problem(&self.0.app, msg);
+        character::on_problem(&self.0.app, msg);
     }
 
     fn register_hotkey(&self) {

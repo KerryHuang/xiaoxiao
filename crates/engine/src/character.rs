@@ -75,6 +75,11 @@ pub fn clamp_to_monitors(x: i32, y: i32, w: u32, h: u32, monitors: &[Rect]) -> (
     (x.clamp(m.x, max_x), y.clamp(m.y, max_y))
 }
 
+/// 第一次出現的位置：工作區（扣掉工作列、Dock）右下角，留一點邊。
+pub fn default_pos(area: &Rect, w: u32, h: u32, margin: u32) -> (i32, i32) {
+    (area.x + area.w as i32 - w as i32 - margin as i32, area.y + area.h as i32 - h as i32 - margin as i32)
+}
+
 /// 讀角色位置；沒有檔案或檔案壞掉就回 None，用預設位置。
 pub fn load_pos(path: &Path) -> Option<(i32, i32)> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
@@ -140,6 +145,12 @@ mod tests {
         let m = [Rect { x: 0, y: 0, w: 1000, h: 800 }, Rect { x: 1000, y: 0, w: 1000, h: 800 }];
         // 一半跨在第二個螢幕，超出它的右邊界
         assert_eq!(clamp_to_monitors(1950, 100, 96, 96, &m), (1904, 100));
+    }
+
+    #[test]
+    fn default_position_is_bottom_right_of_work_area() {
+        let area = Rect { x: 100, y: 25, w: 1000, h: 800 };
+        assert_eq!(default_pos(&area, 96, 96, 24), (980, 705));
     }
 
     #[test]

@@ -152,6 +152,8 @@ Windows 先點系統匣的「^」。Mac 的選單列太擠時，圖示可能被�
 - Mac：`~/Library/Logs/io.github.kerryhuang.xiaoxiao/events.jsonl`
 - Windows：`%LOCALAPPDATA%\io.github.kerryhuang.xiaoxiao\logs\events.jsonl`
 
+紀錄滿 5 MB 會改名成 `events.jsonl.1`，再開新檔，最多留這兩份。刪除紀錄時兩份都要刪。
+
 ## 移除
 
 見[安裝說明](install.md)：[Mac](install.md#mac移除)、[Windows](install.md#windows移除)。

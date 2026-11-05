@@ -14,7 +14,7 @@
 ## 測試方式
 
 - 測之前到設定頁打開「診斷模式」，紀錄在 `~/Library/Logs/io.github.kerryhuang.xiaoxiao/events.jsonl`（Windows 是 `%LOCALAPPDATA%\io.github.kerryhuang.xiaoxiao\logs\events.jsonl`）；
-  `latency_ms` 可以看延遲。**測完關掉診斷模式並刪除紀錄**（診斷模式會記下你說的話）。
+  `latency_ms` 可以看延遲。**測完關掉診斷模式並刪除紀錄，包含 `events.jsonl.1`**（診斷模式會記下你說的話）。
 - V1：距離麥克風約 50 公分、平常音量，每次間隔 5 秒以上；聽到「我在」才算命中。
 - V2：照常工作（打字、講電話、旁人交談），記下小小自己跳出來的次數與當時情境。
 - V3：問「現在幾點」以外、需要 Claude 回答的簡短問題，例如「台北今天會下雨嗎」，看 events 的 `latency_ms`，或用碼表。

@@ -2,3 +2,15 @@
 # 真人錄音與診斷紀錄只放本機
 recordings/
 *.jsonl
+*.log
+# 建置產物
+/target/
+node_modules/
+dist/
+src-tauri/gen/schemas
+# 模型（只提交清單）
+models/*
+!models/manifest.json
+.vscode/*
+!.vscode/extensions.json
+.idea

@@ -12,6 +12,8 @@ pub enum AudioError {
 pub trait AudioSource: Send {
     fn open(&mut self, device: Option<&str>) -> Result<(), AudioError>;
     fn read_block(&mut self) -> Result<Vec<f32>, AudioError>;
+    /// 丟掉已經收進來、還沒讀的聲音（小小講完話後呼叫，避免聽到自己）。
+    fn flush(&mut self) {}
     fn close(&mut self);
 }
 

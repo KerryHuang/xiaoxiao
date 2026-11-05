@@ -11,6 +11,19 @@ case "$FAKE_CLAUDE" in
     read -r _line; delta "一公斤"; exit 1 ;;
   nologin)
     read -r _line; echo '{"type":"result","is_error":true,"result":"Please run /login"}' ;;
+  action)
+    # 快答回 <<ACTION>>；確認對話（系統提示含「幫使用者做事」）第一輪複述、之後回 <<DO>>
+    case "$*" in
+      *幫使用者做事*)
+        n=0
+        while read -r _line; do
+          n=$((n+1))
+          if [ "$n" = 1 ]; then result "好，明天早上九點提醒你開會，對嗎？"
+          else echo '{"type":"result","is_error":false,"result":"<<DO>>{\"type\":\"reminder\",\"at\":\"2099-01-01T09:00:00+08:00\",\"text\":\"開會\"}"}'
+          fi
+        done ;;
+      *) while read -r _line; do delta "<<ACTION>>"; result "<<ACTION>>"; done ;;
+    esac ;;
   slow)
     sleep 40 ;;
   args)

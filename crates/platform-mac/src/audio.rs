@@ -144,6 +144,13 @@ impl AudioSource for MacAudio {
         Ok(out)
     }
 
+    fn flush(&mut self) {
+        if let Some(r) = self.run.as_mut() {
+            while r.rx.try_recv().is_ok() {}
+            r.pending.clear();
+        }
+    }
+
     fn close(&mut self) {
         if let Some(mut r) = self.run.take() {
             let _ = r.stop.send(());

@@ -9,7 +9,6 @@ use engine::audio::{Agc, RingBuffer, rms};
 use engine::character::CharacterKind;
 use engine::claude::{ClaudeCfg, find_claude};
 use engine::config::{Settings, home};
-use engine::pause::PauseReason;
 use engine::pipeline::{Engine, EngineHandle, Platform, Trigger};
 use engine::platform::*;
 use tauri::{AppHandle, Emitter, Manager};

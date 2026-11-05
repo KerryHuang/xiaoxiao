@@ -171,6 +171,8 @@ pub struct Engine<P: Platform> {
     timers: Vec<Timer>,
     reminders: Vec<Reminder>,
     last_pause: Option<PauseReason>,
+    /// 通話或鎖定中被叫醒，要等麥克風打開才回應。
+    awake_pending: bool,
 }
 
 impl<P: Platform> Engine<P> {
@@ -212,6 +214,7 @@ impl<P: Platform> Engine<P> {
             timers: vec![],
             reminders: vec![],
             last_pause: None,
+            awake_pending: false,
         }
     }
 
@@ -345,6 +348,9 @@ impl<P: Platform> Engine<P> {
             self.set_state(State::Paused);
         } else if !want && matches!(s, State::Paused | State::NoMic) {
             self.open_audio();
+            if self.awake_pending {
+                self.say_awake();
+            }
         } else if matches!(s, State::Idle | State::Degraded)
             && self.settings.input_device.is_none()
             && self.p.audio().default_changed()
@@ -355,14 +361,27 @@ impl<P: Platform> Engine<P> {
         }
     }
 
+    /// 從休息叫醒：說一聲就回到待命，等使用者喊喚醒詞。
+    fn say_awake(&mut self) {
+        self.awake_pending = false;
+        if matches!(self.state(), State::Idle | State::Degraded) {
+            self.speak("嗯哼");
+            self.to_idle();
+        }
+    }
+
     fn on_trigger(&mut self) {
         if self.resting() {
             self.shared.resting.store(false, Ordering::SeqCst);
-            // 叫醒只回到待命，等使用者喊喚醒詞；還有其他暫停理由（通話中、鎖定）就先不開麥克風
-            let still_paused = self.pause_now().is_some();
-            if self.state() == State::Paused && !still_paused {
+            // 還有其他暫停理由（通話中、鎖定）就先不開麥克風，等理由結束才說
+            if self.pause_now().is_some() {
+                self.awake_pending = true;
+                return;
+            }
+            if self.state() == State::Paused {
                 self.open_audio();
             }
+            self.say_awake();
             return;
         }
         if matches!(self.state(), State::Idle | State::Degraded | State::FollowUp) {

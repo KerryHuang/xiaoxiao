@@ -1,0 +1,9 @@
+[package]
+name = "platform-mac"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+engine = { path = "../engine" }
+cpal = "0.18"

@@ -1,4 +1,5 @@
 //! 使用者設定（settings.json）。
+use crate::character::CharacterKind;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,8 @@ pub struct Settings {
     pub engine: EngineKind,
     /// 走完第一次啟動引導（麥克風權限與 Claude 都過關）才開始待命。
     pub onboarded: bool,
+    /// 桌面小角色的造型。位置另存檔案，免得設定頁存檔時蓋回舊位置。
+    pub character: CharacterKind,
 }
 
 /// 預設快捷鍵。Windows 鍵盤沒有 Option，寫成 Alt（兩者解析結果相同）。
@@ -39,6 +42,7 @@ impl Default for Settings {
             diagnostic: false,
             engine: EngineKind::ClaudeCli,
             onboarded: false,
+            character: CharacterKind::default(),
         }
     }
 }
@@ -82,6 +86,14 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_without_character_load_as_pixel() {
+        let s: Settings = serde_json::from_str(r#"{"onboarded":true}"#).unwrap();
+        assert_eq!(s.character, CharacterKind::Pixel);
+        let s: Settings = serde_json::from_str(r#"{"character":"owl"}"#).unwrap();
+        assert_eq!(s.character, CharacterKind::Owl);
+    }
 
     #[test]
     fn settings_defaults_and_roundtrip() {

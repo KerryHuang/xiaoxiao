@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 export const IS_WINDOWS = navigator.userAgent.includes("Windows");
 
 export type EngineKind = "ClaudeCli" | "ApiKey";
+export type CharacterKind = "mic" | "blob" | "owl" | "pixel";
+export type Look = "idle" | "listen" | "think" | "speak" | "pause";
 export interface Settings {
   input_device: string | null;
   read_dirs: string[];
@@ -11,6 +13,7 @@ export interface Settings {
   diagnostic: boolean;
   engine: EngineKind;
   onboarded: boolean;
+  character: CharacterKind;
 }
 export interface InputDevice {
   name: string;

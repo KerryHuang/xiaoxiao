@@ -1,0 +1,4 @@
+.DS_Store
+# 真人錄音與診斷紀錄只放本機
+recordings/
+*.jsonl

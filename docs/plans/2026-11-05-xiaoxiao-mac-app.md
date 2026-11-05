@@ -1,3 +1,5 @@
+> **歷史文件：** 此計畫已執行完成，保留作紀錄。內容中的靜音、開機啟動等已被後續決定取代，現況見 `docs/specs/`、`docs/manual.md`。
+
 # 小小 Mac App 實作計畫
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

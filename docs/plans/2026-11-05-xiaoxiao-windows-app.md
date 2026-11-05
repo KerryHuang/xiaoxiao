@@ -1,3 +1,5 @@
+> **狀態：** 程式已實作，手動驗收與發佈未完成（清單見 `docs/voice-acceptance.md`）。內容中的開機啟動已被後續決定取代。
+
 # 小小 Windows 版 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

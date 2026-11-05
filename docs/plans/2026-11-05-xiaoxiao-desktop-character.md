@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **實作後的範圍變更（已完成）：** 造型由四個增加到八個、設定頁改用抽屜、新增閒置 2 分鐘自動休息、休息中叫醒改說「嗯哼」後待命。以 spec 為準；下面保留原計畫內容。
+
 > **工作位置：** worktree `.worktrees/desktop-character`，分支 `feat/desktop-character`（自 `windows`）。併入 v0.2.0 一起發佈，測過再合回 `windows`。
 
 **Goal:** 設定完成後，打開小小只出現可拖曳的原創小角色，用造型顯示狀態、點一下說話、右鍵出選單，並把靜音與先休息合併成一個真的關麥克風的「休息」。

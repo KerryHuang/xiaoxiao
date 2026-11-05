@@ -30,6 +30,13 @@ const SECRET_PATTERNS: &[&str] = &[
     "Library/Application Support/Microsoft Edge/**",
     "Library/Application Support/BraveSoftware/**",
     "Library/Safari/**",
+    "AppData/Local/Google/Chrome/**",
+    "AppData/Local/Microsoft/Edge/**",
+    "AppData/Local/BraveSoftware/**",
+    "AppData/Roaming/Mozilla/Firefox/**",
+    "AppData/Local/Microsoft/Credentials/**",
+    "AppData/Roaming/Microsoft/Credentials/**",
+    "AppData/Roaming/Microsoft/Protect/**",
 ];
 
 const LOCKDOWN: [&str; 4] = ["--setting-sources", "user", "--permission-mode", "dontAsk"];
@@ -68,9 +75,31 @@ fn parse_version(s: &str) -> Option<Vec<u64>> {
     s.split('.').map(|p| p.parse().ok()).collect()
 }
 
+/// 權限規則要用的 POSIX 形式：`C:\Users\me\` → `/c/Users/me`，並去掉結尾斜線。
+/// Claude Code 在 Windows 上先把路徑轉成這個形式才比對，寫原始路徑會比對不到。
+pub fn posix_abs(dir: &str) -> String {
+    let b = dir.as_bytes();
+    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
+    let s = if drive {
+        format!("/{}{}", (b[0] as char).to_ascii_lowercase(), dir[2..].replace('\\', "/"))
+    } else {
+        dir.to_string()
+    };
+    s.trim_end_matches('/').to_string()
+}
+
+/// Windows 上不要替 claude 開主控台視窗（否則每次回答都會跳出黑視窗）。
+pub fn quiet(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    cmd
+}
+
 /// PATH 上的 `claude` 優先；否則找 Claude Desktop 內建、版本最大的那份。
+/// 不接受 `claude.cmd`：Rust 不能把多行參數傳給批次檔，而系統提示是多行。
 pub fn find_claude(path_env: &str, desktop_root: &Path) -> Option<PathBuf> {
-    if let Some(p) = std::env::split_paths(path_env).map(|d| d.join("claude")).find(|p| p.is_file()) {
+    let exe = format!("claude{}", std::env::consts::EXE_SUFFIX);
+    if let Some(p) = std::env::split_paths(path_env).map(|d| d.join(&exe)).find(|p| p.is_file()) {
         return Some(p);
     }
     let mut best: Option<(Vec<u64>, PathBuf)> = None;
@@ -78,9 +107,10 @@ pub fn find_claude(path_env: &str, desktop_root: &Path) -> Option<PathBuf> {
         let Some(v) = ver.file_name().to_str().and_then(parse_version) else { continue };
         let Ok(hashes) = std::fs::read_dir(ver.path()) else { continue };
         for h in hashes.flatten() {
-            let bin = h.path().join("claude.app/Contents/MacOS/claude");
-            if bin.is_file() && best.as_ref().is_none_or(|(bv, _)| v > *bv) {
-                best = Some((v.clone(), bin));
+            for bin in [h.path().join("claude.app/Contents/MacOS/claude"), h.path().join(&exe)] {
+                if bin.is_file() && best.as_ref().is_none_or(|(bv, _)| v > *bv) {
+                    best = Some((v.clone(), bin));
+                }
             }
         }
     }
@@ -123,8 +153,7 @@ pub fn lookup_args(cfg: &ClaudeCfg, question: &str) -> Vec<String> {
             for t in ["Read", "Grep", "Glob"] {
                 // 絕對路徑規則（// 開頭）綁在每個加入的資料夾上；**/ 開頭只相對 cwd，比對不到 --add-dir
                 for d in &cfg.read_dirs {
-                    let d = d.to_string_lossy();
-                    a.push(format!("{t}(/{}/**/{p})", d.trim_end_matches('/')));
+                    a.push(format!("{t}(/{}/**/{p})", posix_abs(&d.to_string_lossy())));
                 }
             }
         }
@@ -185,7 +214,7 @@ impl Session {
     }
 
     fn spawn(&self) -> Result<Proc, ClaudeError> {
-        let mut child = Command::new(&self.cfg.bin)
+        let mut child = quiet(&mut Command::new(&self.cfg.bin))
             .args(&self.args)
             .current_dir(&self.cfg.workdir)
             .stdin(Stdio::piped())
@@ -261,7 +290,7 @@ impl Session {
 pub async fn check(cfg: &ClaudeCfg) -> Result<String, ClaudeError> {
     let run = |args: &'static [&'static str]| {
         let mut c = Command::new(&cfg.bin);
-        c.args(args).current_dir(&cfg.workdir).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+        quiet(&mut c).args(args).current_dir(&cfg.workdir).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
         async move {
             let out = tokio::time::timeout(Duration::from_secs(10), c.output())
                 .await
@@ -281,7 +310,7 @@ pub async fn check(cfg: &ClaudeCfg) -> Result<String, ClaudeError> {
 
 /// 單次查資料（sonnet、可上網），逾時就砍掉子程序。正式值用 LOOKUP_TIMEOUT。
 pub async fn lookup(cfg: &ClaudeCfg, q: &str, timeout: Duration) -> Result<String, ClaudeError> {
-    let child = Command::new(&cfg.bin)
+    let child = quiet(&mut Command::new(&cfg.bin))
         .args(lookup_args(cfg, q))
         .current_dir(&cfg.workdir)
         .stdin(Stdio::null())

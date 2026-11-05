@@ -43,8 +43,9 @@ fn path_claude_wins_over_desktop() {
     mk_desktop(t.path(), "2.1.317", "b");
     let bin = t.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
-    fs::write(bin.join("claude"), "").unwrap();
-    assert_eq!(find_claude(bin.to_str().unwrap(), t.path()), Some(bin.join("claude")));
+    let exe = bin.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
+    fs::write(&exe, "").unwrap();
+    assert_eq!(find_claude(bin.to_str().unwrap(), t.path()), Some(exe));
 }
 
 #[test]
@@ -128,6 +129,39 @@ async fn lookup_times_out() {
     let r = lookup(&fake(t.path(), "slow"), "q", Duration::from_secs(1)).await;
     assert!(matches!(r, Err(ClaudeError::Timeout)));
     assert!(t0.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn secret_rules_use_posix_form_for_windows_paths() {
+    let a = lookup_args(&cfg(vec![r"C:\Users\me\docs\".into()]), "q");
+    assert!(a.iter().any(|x| x == "Read(//c/Users/me/docs/**/.env*)"), "{a:?}");
+    assert!(a.iter().any(|x| x.starts_with("Glob(//c/Users/me/docs/**/AppData/Local/Google/Chrome/")));
+    assert!(a.windows(2).any(|w| w == ["--add-dir", r"C:\Users\me\docs\"]));
+}
+
+#[test]
+fn posix_abs_keeps_unix_paths() {
+    assert_eq!(posix_abs("/tmp/docs/"), "/tmp/docs");
+    assert_eq!(posix_abs(r"D:\a b\c"), "/d/a b/c");
+    assert_eq!(posix_abs(r"D:\"), "/d");
+}
+
+#[test]
+fn finds_exe_on_path() {
+    let t = tempfile::tempdir().unwrap();
+    let exe = t.path().join(format!("claude{}", std::env::consts::EXE_SUFFIX));
+    fs::write(&exe, "").unwrap();
+    assert_eq!(find_claude(t.path().to_str().unwrap(), &t.path().join("none")), Some(exe));
+}
+
+#[test]
+fn finds_newest_desktop_cli_flat_layout() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path().join("claude-code/2.1.317/h");
+    fs::create_dir_all(&d).unwrap();
+    let exe = d.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
+    fs::write(&exe, "").unwrap();
+    assert_eq!(find_claude("", t.path()), Some(exe));
 }
 
 #[tokio::test]

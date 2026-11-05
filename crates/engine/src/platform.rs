@@ -40,6 +40,15 @@ pub trait Notifier {
     fn notify(&self, title: &str, body: &str);
 }
 
+/// 麥克風授權狀態。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MicPermission {
+    NotDetermined,
+    Restricted,
+    Denied,
+    Authorized,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct InputDevice {
     pub name: String,

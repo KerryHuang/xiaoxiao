@@ -2,8 +2,52 @@
 //! `real.exe --ignored --test-threads=1`
 #![cfg(windows)]
 use engine::audio::BLOCK;
-use engine::platform::{AudioSource, Devices};
+use engine::platform::{AudioSource, Devices, MicUsage, ScreenState};
 use platform_windows::*;
+use std::process::Command;
+use std::time::Duration;
+
+/// 測試程式同資料夾（CI 下載的 artifact），或 cargo 的 examples 資料夾。
+fn hold_mic() -> std::path::PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    let here = exe.with_file_name("hold_mic.exe");
+    if here.is_file() { here } else { exe.parent().unwrap().parent().unwrap().join("examples/hold_mic.exe") }
+}
+
+#[test]
+#[ignore]
+fn micusage_sees_other_process() {
+    let m = WinMicUsage::new();
+    assert!(!m.others_using_mic(), "測試前已有程序在用麥克風");
+    let mut c = Command::new(hold_mic()).arg("4").spawn().unwrap();
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(m.others_using_mic());
+    c.wait().unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(!m.others_using_mic());
+}
+
+#[test]
+#[ignore]
+fn micusage_ignores_self() {
+    let mut a = new_audio();
+    a.open(None).unwrap();
+    a.read_block().unwrap();
+    assert!(!WinMicUsage::new().others_using_mic());
+    a.close();
+}
+
+#[test]
+#[ignore]
+fn screen_not_locked_during_test() {
+    assert!(!WinScreen.locked());
+}
+
+#[test]
+#[ignore]
+fn permission_is_authorized() {
+    assert_eq!(mic_permission(), MicPermission::Authorized);
+}
 
 #[test]
 #[ignore]

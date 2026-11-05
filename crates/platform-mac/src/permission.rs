@@ -1,13 +1,7 @@
 //! 麥克風權限狀態（AVCaptureDevice）。權限被拒時 CoreAudio 不報錯、只送全零，
 //! 所以引導第 1 步要直接問系統授權狀態，不能拿「開得起來」當作允許。
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MicPermission {
-    NotDetermined,
-    Restricted,
-    Denied,
-    Authorized,
-}
+pub use engine::platform::MicPermission;
 
 pub fn from_code(c: isize) -> MicPermission {
     match c {

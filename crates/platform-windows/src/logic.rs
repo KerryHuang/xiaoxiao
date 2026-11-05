@@ -1,5 +1,7 @@
 //! 不碰系統 API 的判斷邏輯。
 
+use engine::platform::MicPermission;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     Builtin,
@@ -37,9 +39,55 @@ pub fn pick_fallback(devices: Vec<(Transport, String)>) -> Option<String> {
     v.into_iter().next().map(|(_, n)| n)
 }
 
+/// 由隱私設定判斷麥克風權限；參數依序是全機、目前使用者、傳統桌面 app 的 `Value`。
+/// 傳統桌面 app 不會跳詢問視窗，所以不會回 `NotDetermined`；沒有設定值就是允許。
+pub fn decide(machine: Option<&str>, user: Option<&str>, desktop_apps: Option<&str>) -> MicPermission {
+    if machine == Some("Deny") {
+        MicPermission::Restricted
+    } else if user == Some("Deny") || desktop_apps == Some("Deny") {
+        MicPermission::Denied
+    } else {
+        MicPermission::Authorized
+    }
+}
+
+/// WTSINFOEX 的 SessionFlags：0 鎖定、1 未鎖定、其他未知。未知時不要無故暫停。
+pub fn locked_flag(flags: i32) -> bool {
+    flags == 0
+}
+
+/// 這個收音工作階段算不算「別的程序在用麥克風」。
+pub fn counts(active: bool, pid: u32, system_sounds: bool, me: u32) -> bool {
+    active && !system_sounds && pid != me
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use engine::platform::MicPermission;
+
+    #[test]
+    fn permission_from_registry() {
+        assert_eq!(decide(None, None, None), MicPermission::Authorized); // 沒設定就是允許
+        assert_eq!(decide(Some("Deny"), Some("Allow"), Some("Allow")), MicPermission::Restricted); // 全機關閉
+        assert_eq!(decide(None, Some("Deny"), Some("Allow")), MicPermission::Denied);
+        assert_eq!(decide(None, Some("Allow"), Some("Deny")), MicPermission::Denied); // 只關傳統桌面 app
+    }
+
+    #[test]
+    fn locked_from_session_flags() {
+        assert!(locked_flag(0)); // WTS_SESSIONSTATE_LOCK
+        assert!(!locked_flag(1)); // WTS_SESSIONSTATE_UNLOCK
+        assert!(!locked_flag(-1)); // 未知：不要無故暫停
+    }
+
+    #[test]
+    fn only_active_sessions_of_other_processes_count() {
+        assert!(counts(true, 42, false, 7));
+        assert!(!counts(true, 7, false, 7)); // 自己
+        assert!(!counts(false, 42, false, 7));
+        assert!(!counts(true, 42, true, 7)); // 系統音效工作階段
+    }
 
     #[test]
     fn transport_uses_offload_property() {

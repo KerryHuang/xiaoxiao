@@ -1,0 +1,31 @@
+# Windows 版開發中的回饋：push windows 分支或手動觸發時，在 Windows 上編譯與測試。
+name: windows-ci
+
+on:
+  push:
+    branches: [windows]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      # 不依建置機 CPU 最佳化：CI 機器有 AVX-512，編出來的程式到一般電腦會當掉
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_BMI2: "ON"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust（依 rust-toolchain.toml）
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 下載 sherpa-onnx 函式庫
+        shell: bash
+        run: scripts/fetch-models.sh --only sherpa-onnx-lib-windows-x64
+
+      - name: 測試
+        run: cargo test --workspace --exclude xiaoxiao

@@ -1,4 +1,5 @@
 //! macOS 平台實作。
+#![cfg(target_os = "macos")]
 mod audio;
 mod devices;
 mod ffi;

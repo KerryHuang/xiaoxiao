@@ -1,4 +1,5 @@
 //! 真機測試：會開麥克風（只在記憶體）與喇叭。`cargo test -p platform-mac -- --ignored --test-threads=1`
+#![cfg(target_os = "macos")]
 use engine::audio::BLOCK;
 use engine::platform::{AudioSource, Devices, MicUsage, ScreenState, Speaker};
 use platform_mac::*;

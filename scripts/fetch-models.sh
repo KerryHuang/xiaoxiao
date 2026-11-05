@@ -2,10 +2,12 @@
 # 下載模型與 sherpa-onnx 函式庫到 models/，並對照 models/manifest.json 的 SHA256。
 # 用法：scripts/fetch-models.sh            下載缺的檔案並驗證
 #       scripts/fetch-models.sh --pin      第一次使用：把算出的 SHA256 寫回 manifest
-#       scripts/fetch-models.sh --only <名稱>  只抓清單裡的這一項（CI 打包只需要 sherpa-onnx-lib-macos-arm64）
+#       scripts/fetch-models.sh --only <名稱>  只抓清單裡的這一項（CI 打包只需要該平台的 sherpa-onnx-lib）
 set -euo pipefail
 cd "$(dirname "$0")/.."
-python3 - "$@" <<'PY'
+# python3 不一定存在於 Windows；PYTHONUTF8：runner 預設編碼印不出中文
+PY=$(command -v python3 || command -v python)
+PYTHONUTF8=1 "$PY" - "$@" <<'PY'
 import hashlib, json, os, subprocess, sys, tarfile, urllib.request
 args = sys.argv[1:]
 pin = "--pin" in args
@@ -15,8 +17,12 @@ mf = json.load(open(mf_path, encoding="utf-8"))
 if only and not any(f["name"] == only for f in mf["files"]):
     sys.exit(f"清單裡沒有 {only}")
 os.makedirs("models/.downloads", exist_ok=True)
+here = {"darwin": "macos", "win32": "windows"}.get(sys.platform, sys.platform)
 for f in mf["files"]:
     if only and f["name"] != only:
+        continue
+    # 各平台的函式庫解到同一個資料夾，只抓這個平台的
+    if not only and f.get("platform", here) != here:
         continue
     fname = f["url"].rsplit("/", 1)[-1]
     dl = os.path.join("models/.downloads", fname)

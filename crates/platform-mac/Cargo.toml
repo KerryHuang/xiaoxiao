@@ -6,4 +6,6 @@ license = "MIT"
 
 [dependencies]
 engine = { path = "../engine" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 cpal = "0.18"

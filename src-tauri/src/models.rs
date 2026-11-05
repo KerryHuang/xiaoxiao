@@ -54,7 +54,7 @@ pub fn ensure(dir: &Path, manifest: &Manifest, progress: impl Fn(u64, u64)) -> R
                 let tmp = dir.join(format!("{sub}.extracting"));
                 let _ = fs::remove_dir_all(&tmp);
                 fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-                let ok = std::process::Command::new("tar")
+                let ok = tar_command()
                     .arg("-xjf")
                     .arg(&part)
                     .args(["--strip-components", "1", "-C"])
@@ -75,6 +75,25 @@ pub fn ensure(dir: &Path, manifest: &Manifest, progress: impl Fn(u64, u64)) -> R
         }
     }
     Ok(())
+}
+
+/// 系統內建的 tar。Windows 不能靠 PATH：Git 附的 tar 會把 `C:` 當成遠端主機。
+fn tar_bin() -> std::path::PathBuf {
+    match std::env::var_os("SystemRoot") {
+        Some(root) if cfg!(windows) => Path::new(&root).join("System32").join("tar.exe"),
+        _ => "tar".into(),
+    }
+}
+
+fn tar_command() -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut c = std::process::Command::new(tar_bin());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：別跳黑視窗
+    }
+    c
 }
 
 fn hex(d: &[u8]) -> String {
@@ -229,7 +248,7 @@ mod tests {
         fs::create_dir_all(&stage).unwrap();
         fs::write(stage.join("tokens.txt"), "x").unwrap();
         let tar = t.path().join("a.tar.bz2");
-        let ok = std::process::Command::new("tar")
+        let ok = tar_command()
             .args(["-cjf", tar.to_str().unwrap(), "-C", t.path().join("stage").to_str().unwrap(), "top"])
             .status()
             .unwrap();

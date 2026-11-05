@@ -28,7 +28,17 @@
       "sha256": "ac5594ad237db56ec4a6c4b3fc48700441b33a07bb71c235f35530a52a93f2e3",
       "extract_to": "sherpa-onnx-lib",
       "license": "Apache-2.0",
-      "dev_only": true
+      "dev_only": true,
+      "platform": "macos"
+    },
+    {
+      "name": "sherpa-onnx-lib-windows-x64",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-win-x64-shared-MD-Release-no-tts-lib.tar.bz2",
+      "sha256": "3aea6fc2360ac67b349f61b5cbe237f34b2bb53dc805aa4b3df7ab23ba7ab35c",
+      "extract_to": "sherpa-onnx-lib",
+      "license": "Apache-2.0",
+      "dev_only": true,
+      "platform": "windows"
     }
   ]
 }

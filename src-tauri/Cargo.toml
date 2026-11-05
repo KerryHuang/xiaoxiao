@@ -32,6 +32,8 @@ chrono = "0.4"
 engine = { path = "../crates/engine" }
 kws = { path = "../crates/kws" }
 asr = { path = "../crates/asr" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 platform-mac = { path = "../crates/platform-mac" }
 
 [dev-dependencies]

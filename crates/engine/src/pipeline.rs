@@ -13,7 +13,7 @@ use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
 use crate::events::EventLog;
 use crate::local_cmd::{LocalCmd, parse_local};
-use crate::pause::should_pause;
+use crate::pause::{PauseReason, pause_reason};
 use crate::platform::*;
 use crate::prompts::{confirm_prompt, quick_prompt};
 use crate::router::{Route, route_prefix};
@@ -96,13 +96,16 @@ pub trait Platform: Send {
 }
 
 type StateCb = Box<dyn Fn(State) + Send>;
+type PauseCb = Box<dyn Fn(Option<PauseReason>) + Send>;
 
 struct Shared {
     state: Mutex<State>,
     trigger: AtomicBool,
-    muted: AtomicBool,
     resting: AtomicBool,
+    /// 休息狀態剛改過，主迴圈不用等下一次定期檢查。
+    recheck: AtomicBool,
     on_state: Mutex<Option<StateCb>>,
+    on_pause: Mutex<Option<PauseCb>>,
 }
 
 /// 給外殼（選單列、快捷鍵）用的遙控器；可跨執行緒。
@@ -118,8 +121,16 @@ impl EngineHandle {
             self.0.trigger.store(true, Ordering::SeqCst);
         }
     }
-    pub fn set_muted(&self, on: bool) {
-        self.0.muted.store(on, Ordering::SeqCst);
+    pub fn set_resting(&self, on: bool) {
+        self.0.resting.store(on, Ordering::SeqCst);
+        self.0.recheck.store(true, Ordering::SeqCst);
+    }
+    pub fn resting(&self) -> bool {
+        self.0.resting.load(Ordering::SeqCst)
+    }
+    /// 暫停原因改變時通知外殼；角色靠這個知道要不要收起來。
+    pub fn set_on_pause(&self, cb: PauseCb) {
+        *self.0.on_pause.lock().unwrap() = Some(cb);
     }
     pub fn state(&self) -> State {
         *self.0.state.lock().unwrap()
@@ -156,6 +167,7 @@ pub struct Engine<P: Platform> {
     crashes: u32,
     timers: Vec<Timer>,
     reminders: Vec<Reminder>,
+    last_pause: Option<PauseReason>,
 }
 
 impl<P: Platform> Engine<P> {
@@ -174,9 +186,10 @@ impl<P: Platform> Engine<P> {
             shared: Arc::new(Shared {
                 state: Mutex::new(State::Idle),
                 trigger: AtomicBool::new(false),
-                muted: AtomicBool::new(false),
                 resting: AtomicBool::new(false),
+                recheck: AtomicBool::new(false),
                 on_state: Mutex::new(None),
+                on_pause: Mutex::new(None),
             }),
             rt,
             log,
@@ -195,6 +208,7 @@ impl<P: Platform> Engine<P> {
             crashes: 0,
             timers: vec![],
             reminders: vec![],
+            last_pause: None,
         }
     }
 
@@ -203,9 +217,6 @@ impl<P: Platform> Engine<P> {
     }
     pub fn trigger(&self, t: Trigger) {
         self.handle().trigger(t)
-    }
-    pub fn set_muted(&self, on: bool) {
-        self.handle().set_muted(on)
     }
     pub fn state(&self) -> State {
         self.handle().state()
@@ -229,24 +240,31 @@ impl<P: Platform> Engine<P> {
         self.set_state(if self.degraded_at.is_some() { State::Degraded } else { State::Idle });
     }
 
-    fn want_pause(&self) -> bool {
-        should_pause(
-            self.p.mic_usage().others_using_mic(),
-            self.p.screen().locked(),
-            self.shared.muted.load(Ordering::SeqCst),
-            self.resting(),
-        )
+    /// 目前的暫停原因；改變時通知外殼。
+    fn pause_now(&mut self) -> Option<PauseReason> {
+        let now = pause_reason(self.p.mic_usage().others_using_mic(), self.p.screen().locked(), self.resting());
+        if now != self.last_pause {
+            self.last_pause = now;
+            if let Some(cb) = self.shared.on_pause.lock().unwrap().as_ref() {
+                cb(now);
+            }
+        }
+        now
     }
 
     // ---------- 主迴圈 ----------
 
     pub fn run(&mut self, stop: &AtomicBool) {
         self.startup_reminders();
-        self.open_audio();
+        if self.pause_now().is_some() {
+            self.set_state(State::Paused);
+        } else {
+            self.open_audio();
+        }
         let mut last_check = Instant::now();
         while !stop.load(Ordering::SeqCst) {
             self.fire_due();
-            if last_check.elapsed() >= self.timing.pause_check {
+            if self.shared.recheck.swap(false, Ordering::SeqCst) || last_check.elapsed() >= self.timing.pause_check {
                 last_check = Instant::now();
                 self.check_pause();
             }
@@ -303,7 +321,7 @@ impl<P: Platform> Engine<P> {
     }
 
     fn check_pause(&mut self) {
-        let want = self.want_pause();
+        let want = self.pause_now().is_some();
         let s = self.state();
         if want && s != State::Paused {
             if s != State::NoMic {
@@ -327,9 +345,10 @@ impl<P: Platform> Engine<P> {
     fn on_trigger(&mut self) {
         if self.resting() {
             self.shared.resting.store(false, Ordering::SeqCst);
+            let still_paused = self.pause_now().is_some();
             if self.state() == State::Paused {
-                if self.want_pause() {
-                    return; // 還有其他暫停理由（通話中、靜音、鎖定）
+                if still_paused {
+                    return; // 還有其他暫停理由（通話中、鎖定）
                 }
                 self.open_audio();
                 if self.state() == State::NoMic {
@@ -685,11 +704,15 @@ impl<P: Platform> Engine<P> {
         }
         for m in msgs {
             self.p.notifier().notify("小小", &m);
-            // 對話中或暫停（例如通話中）只發通知，不出聲
+            // 休息時照響；對話中、通話中、鎖定時只發通知，不出聲
             if matches!(self.state(), State::Idle | State::Degraded) {
                 self.p.speaker().chime();
                 self.speak(&m);
                 self.to_idle();
+            } else if self.state() == State::Paused && self.last_pause == Some(PauseReason::Rest) {
+                self.p.speaker().chime();
+                self.speak(&m);
+                self.set_state(State::Paused);
             }
         }
     }

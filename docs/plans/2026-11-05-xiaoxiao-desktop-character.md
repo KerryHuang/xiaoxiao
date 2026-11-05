@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **開工條件：** v0.2.0 發佈之後才開始。開工時先從當時的 `main` 開分支，並重新核對下列行號與介面（v0.2.0 收尾可能再改到）。
+> **工作位置：** worktree `.worktrees/desktop-character`，分支 `feat/desktop-character`（自 `windows`）。併入 v0.2.0 一起發佈，測過再合回 `windows`。
 
 **Goal:** 設定完成後，打開小小只出現可拖曳的原創小角色，用造型顯示狀態、點一下說話、右鍵出選單，並把靜音與先休息合併成一個真的關麥克風的「休息」。
 
@@ -268,7 +268,7 @@ git commit -m "feat: 角色點擊、拖曳、右鍵選單與開啟流程"
 **Files:**
 - Modify: `src/settings.ts`、`src-tauri/src/engine_host.rs`
 - Modify: `docs/manual.md`（`:15`、`:71-78`、`:90`、`:130`）、`docs/voice-acceptance.md`、`docs/install.md`、`README.md`、`docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md`
-- Modify: `src-tauri/tauri.conf.json`（`version` → `0.3.0`）、`src-tauri/Cargo.toml`、`package.json`
+- Modify: `package.json`（`version` 同步成 `0.2.0`）
 
 **Interfaces:**
 - Consumes: `render`（Task 3）、`character-kind` 事件。
@@ -284,7 +284,7 @@ git commit -m "feat: 角色點擊、拖曳、右鍵選單與開啟流程"
 
 - [ ] **Step 3: Mac 實機驗收**
 
-逐項跑 spec「怎麼算完成」1～8，結果記入 `docs/voice-acceptance.md`。休息時確認選單列的麥克風燈號熄滅。CPU 用 `top -pid` 與 v0.2.0 比較。
+逐項跑 spec「怎麼算完成」1～8，結果記入 `docs/voice-acceptance.md`。休息時確認選單列的麥克風燈號熄滅。CPU 用 `top -pid` 與 windows 分支的版本比較。
 
 - [ ] **Step 4: Windows 實機驗收**
 
@@ -298,8 +298,8 @@ Expected: 都通過。
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/settings.ts src-tauri/src/engine_host.rs docs/manual.md docs/voice-acceptance.md docs/install.md README.md docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md src-tauri/tauri.conf.json src-tauri/Cargo.toml package.json
-git commit -m "feat: 設定頁換造型，更新文件並升版 0.3.0"
+git add src/settings.ts src-tauri/src/engine_host.rs docs/manual.md docs/voice-acceptance.md docs/install.md README.md docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md package.json
+git commit -m "feat: 設定頁換造型，更新文件"
 ```
 
 發佈（push、CI、合併、tag）依使用者當時的指示，不在此計畫內自行進行。

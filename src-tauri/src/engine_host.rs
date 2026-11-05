@@ -8,6 +8,7 @@ use chrono::{DateTime, FixedOffset};
 use engine::audio::{Agc, RingBuffer, rms};
 use engine::claude::{ClaudeCfg, find_claude};
 use engine::config::{Settings, home};
+use engine::pause::PauseReason;
 use engine::pipeline::{Engine, EngineHandle, Platform, Trigger};
 use engine::platform::*;
 use tauri::{AppHandle, Emitter, Manager};
@@ -183,7 +184,8 @@ struct Inner {
     settings: Mutex<Settings>,
     running: Mutex<Option<Running>>,
     handle: Mutex<Option<EngineHandle>>,
-    muted: AtomicBool,
+    /// 引擎重啟時把休息狀態帶過去（存設定會重啟引擎）。
+    resting_carry: AtomicBool,
     meter: Mutex<Option<(String, OsAudio)>>,
 }
 
@@ -206,7 +208,7 @@ impl Host {
             settings: Mutex::new(settings),
             running: Mutex::new(None),
             handle: Mutex::new(None),
-            muted: AtomicBool::new(false),
+            resting_carry: AtomicBool::new(false),
             meter: Mutex::new(None),
         })))
     }
@@ -217,14 +219,13 @@ impl Host {
         }
     }
 
-    pub fn muted(&self) -> bool {
-        self.0.muted.load(Ordering::SeqCst)
+    pub fn resting(&self) -> bool {
+        self.0.handle.lock().unwrap().as_ref().is_some_and(|h| h.resting())
     }
 
-    pub fn set_muted(&self, on: bool) {
-        self.0.muted.store(on, Ordering::SeqCst);
+    pub fn set_resting(&self, on: bool) {
         if let Some(h) = self.0.handle.lock().unwrap().as_ref() {
-            h.set_muted(on);
+            h.set_resting(on);
         }
     }
 
@@ -242,6 +243,8 @@ impl Host {
                 old.stop.store(true, Ordering::SeqCst);
                 let _ = old.thread.join();
             }
+            let resting = me.resting();
+            me.0.resting_carry.store(resting, Ordering::SeqCst);
             *me.0.handle.lock().unwrap() = None;
             me.register_hotkey();
             let stop = Arc::new(AtomicBool::new(false));
@@ -288,9 +291,11 @@ impl Host {
         };
         let mut engine = Engine::new(p, settings);
         let h = engine.handle();
-        h.set_muted(self.muted());
+        h.set_resting(self.0.resting_carry.load(Ordering::SeqCst));
         let app = self.0.app.clone();
         h.set_on_state(Box::new(move |s| tray::show_state(&app, s)));
+        let app = self.0.app.clone();
+        h.set_on_pause(Box::new(move |p| tray::show_rest(&app, p == Some(PauseReason::Rest))));
         tray::show_state(&self.0.app, h.state());
         *self.0.handle.lock().unwrap() = Some(h);
         engine.run(stop);
@@ -415,12 +420,12 @@ pub fn check_voice() -> bool {
     os::voice_ok()
 }
 
-/// 試喊：10 秒內有一次通過兩關喚醒就回 true。測試期間引擎靜音，避免它也回應。
+/// 試喊：10 秒內有一次通過兩關喚醒就回 true。測試期間引擎休息，避免它也回應。
 #[tauri::command]
 pub async fn test_wake(host: tauri::State<'_, Host>) -> Result<bool, String> {
     let h = host.inner().clone();
-    let was_muted = h.muted();
-    h.set_muted(true);
+    let was_resting = h.resting();
+    h.set_resting(true);
     let r = tauri::async_runtime::spawn_blocking(move || {
         let settings = h.0.settings.lock().unwrap().clone();
         let models = os::model_path(&h.0.paths.models())?;
@@ -449,6 +454,6 @@ pub async fn test_wake(host: tauri::State<'_, Host>) -> Result<bool, String> {
     })
     .await
     .map_err(|e| e.to_string())?;
-    host.set_muted(was_muted);
+    host.set_resting(was_resting);
     r
 }

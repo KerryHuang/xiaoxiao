@@ -15,7 +15,7 @@ const TRAY_ID: &str = "xiaoxiao";
 struct Items {
     menu: Menu<Wry>,
     status: MenuItem<Wry>,
-    mute: MenuItem<Wry>,
+    rest: MenuItem<Wry>,
     login: MenuItem<Wry>,
     login_shown: Mutex<bool>,
 }
@@ -64,12 +64,12 @@ fn icon_for(s: State) -> &'static str {
 
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let status = MenuItem::with_id(app, "status", "啟動中…", false, None::<&str>)?;
-    let mute = MenuItem::with_id(app, "mute", "靜音", true, None::<&str>)?;
+    let rest = MenuItem::with_id(app, "rest", "休息", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "設定…", true, None::<&str>)?;
     let login = MenuItem::with_id(app, "login", "去登入 Claude", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "結束小小", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&status, &sep, &mute, &settings, &quit])?;
+    let menu = Menu::with_items(app, &[&status, &sep, &rest, &settings, &quit])?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon("idle"))
         .icon_as_template(true)
@@ -83,17 +83,21 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    app.manage(Items { menu, status, mute, login, login_shown: Mutex::new(false) });
+    app.manage(Items { menu, status, rest, login, login_shown: Mutex::new(false) });
     Ok(())
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
     let host = app.state::<Host>();
     match id {
-        "mute" => {
-            let on = !host.muted();
-            host.set_muted(on);
-            let _ = app.state::<Items>().mute.set_text(if on { "取消靜音" } else { "靜音" });
+        "rest" => {
+            let on = !host.resting();
+            if on {
+                host.set_resting(true);
+            } else {
+                host.trigger(Trigger::TrayClick);
+            }
+            show_rest(app, on);
         }
         "settings" => crate::engine_host::show_window(app),
         "login" => open_login(app, &host),
@@ -134,6 +138,10 @@ fn set(app: &AppHandle, text: &str, icon_name: &str, show_login: bool) {
 
 pub fn show_state(app: &AppHandle, s: State) {
     set(app, status_text(s), icon_for(s), s == State::Degraded);
+}
+
+pub fn show_rest(app: &AppHandle, resting: bool) {
+    let _ = app.state::<Items>().rest.set_text(if resting { "叫醒" } else { "休息" });
 }
 
 pub fn show_problem(app: &AppHandle, msg: &str) {

@@ -10,6 +10,7 @@ use chrono::{DateTime, FixedOffset};
 use engine::audio::BLOCK;
 use engine::claude::ClaudeCfg;
 use engine::config::Settings;
+use engine::pause::PauseReason;
 use engine::pipeline::*;
 use engine::platform::*;
 
@@ -45,6 +46,7 @@ struct World {
     mic_in_use: bool,
     default_changed: bool,
     seed: u32,
+    start_resting: bool,
 }
 
 type W = Arc<Mutex<World>>;
@@ -254,6 +256,7 @@ fn rig_full(
     tweak(&mut settings);
     let mut e = Engine::with_timing(p, settings, timing);
     let h = e.handle();
+    h.set_resting(w.lock().unwrap().start_resting);
     let stop = Arc::new(AtomicBool::new(false));
     let s2 = stop.clone();
     let th = std::thread::spawn(move || e.run(&s2));
@@ -388,7 +391,7 @@ fn drops_audio_while_speaking() {
 #[test]
 fn pauses_when_other_app_uses_mic() {
     let r = rig("ok", |_| {});
-    r.wait("待命", |_, s| s == State::Idle);
+    r.wait("待命", |w, s| s == State::Idle && w.opens >= 1);
     r.w.lock().unwrap().mic_in_use = true;
     r.wait("暫停並關麥克風", |w, s| s == State::Paused && w.closes >= 1);
     r.w.lock().unwrap().mic_in_use = false;
@@ -462,7 +465,7 @@ fn hotkey_ignored_while_listening() {
 #[test]
 fn hotkey_starts_listening_from_idle() {
     let r = rig("ok", |_| {});
-    r.wait("待命", |_, s| s == State::Idle);
+    r.wait("待命", |w, s| s == State::Idle && w.opens >= 1);
     r.h.trigger(Trigger::TrayClick);
     r.wait("說我在", |w, _| w.said == ["我在"]);
 }
@@ -493,16 +496,99 @@ fn bluetooth_default_falls_back_or_nomic() {
 }
 
 #[test]
-fn mute_from_tray_pauses() {
+fn rest_closes_mic_and_trigger_wakes() {
     let r = rig("ok", |_| {});
-    r.wait("待命", |_, s| s == State::Idle);
-    r.h.set_muted(true);
-    r.wait("靜音暫停", |_, s| s == State::Paused);
+    r.wait("待命", |w, s| s == State::Idle && w.opens >= 1);
+    r.h.set_resting(true);
+    r.wait("休息", |w, s| s == State::Paused && w.closes >= 1);
+    assert!(r.h.resting());
+    let opens = r.w.lock().unwrap().opens;
     r.h.trigger(Trigger::Hotkey);
+    r.wait("叫醒", |w, _| w.opens == opens + 1);
+    assert!(!r.h.resting());
+}
+
+#[test]
+fn wake_during_call_waits_for_call_end() {
+    let r = rig("ok", |_| {});
+    r.wait("待命", |w, s| s == State::Idle && w.opens >= 1);
+    r.h.set_resting(true);
+    r.wait("休息", |_, s| s == State::Paused);
+    let opens = {
+        let mut w = r.w.lock().unwrap();
+        w.mic_in_use = true;
+        w.opens
+    };
+    r.h.trigger(Trigger::Hotkey);
+    let t0 = Instant::now();
+    while r.h.resting() && t0.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!r.h.resting(), "叫醒要清掉休息");
     std::thread::sleep(Duration::from_millis(80));
-    assert_eq!(r.h.state(), State::Paused, "靜音只能從選單解除");
-    r.h.set_muted(false);
-    r.wait("解除靜音", |_, s| s == State::Idle);
+    assert_eq!(r.h.state(), State::Paused, "通話中不能開麥克風");
+    assert_eq!(r.w.lock().unwrap().opens, opens);
+    r.w.lock().unwrap().mic_in_use = false;
+    r.wait("通話結束才開", |w, _| w.opens == opens + 1);
+}
+
+#[test]
+fn resting_before_run_opens_no_mic() {
+    let r = rig("ok", |w| w.start_resting = true);
+    r.wait("休息", |_, s| s == State::Paused);
+    std::thread::sleep(Duration::from_millis(80));
+    assert_eq!(r.w.lock().unwrap().opens, 0, "休息中重啟不能打開麥克風");
+}
+
+#[test]
+fn timer_fires_while_resting() {
+    let r = rig("ok", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("計時一秒".into());
+    });
+    r.wait("回覆計時", |w, _| w.said.len() == 2);
+    r.h.set_resting(true);
+    r.wait("休息", |_, s| s == State::Paused);
+    r.wait("時間到要出聲", |w, _| w.said.iter().any(|m| m == "時間到了") && w.chimes >= 1);
+    r.wait("響完還在休息", |_, s| s == State::Paused);
+    let closes = r.w.lock().unwrap().opens;
+    std::thread::sleep(Duration::from_millis(80));
+    assert_eq!(r.w.lock().unwrap().opens, closes, "響完不能打開麥克風");
+    assert!(r.h.resting());
+}
+
+#[test]
+fn timer_stays_silent_during_call() {
+    let r = rig("ok", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("計時一秒".into());
+    });
+    r.wait("回覆計時", |w, _| w.said.len() == 2);
+    r.w.lock().unwrap().mic_in_use = true;
+    r.wait("通話暫停", |_, s| s == State::Paused);
+    r.wait("發通知", |w, _| !w.notes.is_empty());
+    assert_eq!(r.said().len(), 2, "通話中不能出聲");
+}
+
+#[test]
+fn pause_callback_reports_changes() {
+    let r = rig("ok", |_| {});
+    r.wait("待命", |w, s| s == State::Idle && w.opens >= 1);
+    let got = Arc::new(Mutex::new(Vec::new()));
+    let g2 = got.clone();
+    r.h.set_on_pause(Box::new(move |p| g2.lock().unwrap().push(p)));
+    r.h.set_resting(true);
+    r.wait("休息", |_, s| s == State::Paused);
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("叫醒", |_, s| s != State::Paused);
+    r.w.lock().unwrap().mic_in_use = true;
+    r.wait("通話", |_, s| s == State::Paused);
+    r.w.lock().unwrap().mic_in_use = false;
+    r.wait("通話結束", |_, s| s != State::Paused);
+    std::thread::sleep(Duration::from_millis(80));
+    assert_eq!(*got.lock().unwrap(), vec![Some(PauseReason::Rest), None, Some(PauseReason::Call), None]);
 }
 
 #[test]

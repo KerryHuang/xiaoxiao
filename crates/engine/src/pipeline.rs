@@ -358,16 +358,12 @@ impl<P: Platform> Engine<P> {
     fn on_trigger(&mut self) {
         if self.resting() {
             self.shared.resting.store(false, Ordering::SeqCst);
+            // 叫醒只回到待命，等使用者喊喚醒詞；還有其他暫停理由（通話中、鎖定）就先不開麥克風
             let still_paused = self.pause_now().is_some();
-            if self.state() == State::Paused {
-                if still_paused {
-                    return; // 還有其他暫停理由（通話中、鎖定）
-                }
+            if self.state() == State::Paused && !still_paused {
                 self.open_audio();
-                if self.state() == State::NoMic {
-                    return;
-                }
             }
+            return;
         }
         if matches!(self.state(), State::Idle | State::Degraded | State::FollowUp) {
             self.ack();

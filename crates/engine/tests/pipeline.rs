@@ -483,8 +483,14 @@ fn rest_disables_wake_until_hotkey() {
     r.push(wake_and_ask());
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(r.said().len(), 2, "休息時喚醒詞無效");
+    r.w.lock().unwrap().script.clear();
     r.h.trigger(Trigger::Hotkey);
-    r.wait("快捷鍵叫醒", |w, _| w.said.len() == 3);
+    r.wait("快捷鍵叫醒", |_, s| s == State::Idle);
+    assert_eq!(r.said().len(), 2, "叫醒只回到待命，不說話也不開始聽");
+    r.w.lock().unwrap().small.push_back("嘿小小".into());
+    r.w.lock().unwrap().turbo.push_back("".into());
+    r.push(wake_and_ask());
+    r.wait("叫醒後喊喚醒詞有反應", |w, _| w.said.len() >= 3);
     assert_eq!(r.said()[2], "我在");
 }
 
@@ -553,8 +559,9 @@ fn wake_after_auto_rest_counts_from_zero_again() {
     let r = rig_auto_rest(150, |_| {});
     r.wait("自動休息", |w, s| s == State::Paused && w.closes >= 1);
     r.h.trigger(Trigger::Hotkey);
-    r.wait("叫醒", |w, _| w.said.iter().any(|t| t == "我在"));
+    r.wait("叫醒", |w, _| w.opens == 2);
     assert!(!r.h.resting());
+    assert!(r.said().is_empty(), "叫醒不出聲，等使用者喊喚醒詞");
     r.wait("再次自動休息", |w, s| s == State::Paused && w.closes >= 2);
 }
 

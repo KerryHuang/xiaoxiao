@@ -3,6 +3,7 @@ import {
   type Settings,
   checkClaude,
   checkVoice,
+  ensureModels,
   h,
   inputLevel,
   listInputs,
@@ -10,6 +11,7 @@ import {
   stopInputLevel,
   testWake,
 } from "./api";
+import { listen } from "@tauri-apps/api/event";
 import { meter } from "./meter";
 
 const BT_NOTE = "用藍牙耳機收音會讓耳機變成通話音質";
@@ -189,5 +191,26 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
     nav(body);
   };
 
-  render();
+  // 0. 先把模型準備好（約 1.1 GB，只需下載一次）
+  const download = async () => {
+    const bar = h("div", { class: "meter-fill" });
+    const msg = h("p", { class: "hint" }, "第一次使用要下載語音模型（約 1.1 GB），只需要一次。");
+    root.replaceChildren(h("h1", {}, "設定小小"),
+      h("section", { class: "card" }, h("h2", {}, "準備語音模型"), h("div", { class: "meter" }, bar), msg));
+    const un = await listen<{ done: number; total: number }>("models-progress", (e) => {
+      const { done, total } = e.payload;
+      if (total > 0) bar.style.width = `${(done / total) * 100}%`;
+      msg.textContent = `下載中… ${(done / 1e6).toFixed(0)} MB${total > 0 ? ` / ${(total / 1e6).toFixed(0)} MB` : ""}`;
+    });
+    try {
+      await ensureModels();
+      un();
+      render();
+    } catch (e) {
+      un();
+      msg.textContent = `下載失敗：${e}`;
+      root.querySelector("section")!.append(h("button", { onclick: download }, "重試"));
+    }
+  };
+  download();
 }

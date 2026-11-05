@@ -24,6 +24,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
+ureq = "3"
+sha2 = "0.10"
 tauri-plugin-autostart = "2"
 tauri-plugin-global-shortcut = "2"
 chrono = "0.4"
@@ -32,3 +34,5 @@ kws = { path = "../crates/kws" }
 asr = { path = "../crates/asr" }
 platform-mac = { path = "../crates/platform-mac" }
 
+[dev-dependencies]
+tempfile = "3"

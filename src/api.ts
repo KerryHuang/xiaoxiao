@@ -15,6 +15,7 @@ export interface InputDevice {
   bluetooth: boolean;
 }
 
+export const ensureModels = () => invoke<void>("ensure_models");
 export const getSettings = () => invoke<Settings>("get_settings");
 export const saveSettings = (s: Settings) => invoke<void>("save_settings", { s });
 export const listInputs = () => invoke<InputDevice[]>("list_inputs");

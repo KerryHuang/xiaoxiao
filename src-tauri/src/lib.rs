@@ -1,4 +1,5 @@
 mod engine_host;
+mod models;
 mod tray;
 
 use tauri::{Manager, WindowEvent};
@@ -38,6 +39,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             engine_host::get_settings,
+            engine_host::ensure_models,
             engine_host::save_settings,
             engine_host::list_inputs,
             engine_host::input_level,

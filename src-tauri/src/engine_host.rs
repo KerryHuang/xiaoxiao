@@ -11,7 +11,7 @@ use engine::config::Settings;
 use engine::pipeline::{Engine, EngineHandle, Platform, Trigger};
 use engine::platform::*;
 use platform_mac::{MacAudio, MacDevices, MacMicUsage, MacScreen, MacSpeaker};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
@@ -145,11 +145,34 @@ impl Paths {
 
     /// 正式：<app_data_dir>/models；開發版找不到時退回 repo 的 models/。
     pub fn models(&self) -> PathBuf {
-        let installed = self.data.join("models");
-        if cfg!(debug_assertions) && !installed.join(KWS_DIR).join("tokens.txt").is_file() {
-            return Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let installed = self.installed_models();
+        if cfg!(debug_assertions) && !ready(&installed) && ready(&dev_models()) {
+            return dev_models();
         }
         installed
+    }
+
+    fn installed_models(&self) -> PathBuf {
+        self.data.join("models")
+    }
+}
+
+fn dev_models() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../models")
+}
+
+/// 三個模型都在（只看檔案存在；雜湊由 models::ensure 負責）。
+fn ready(dir: &Path) -> bool {
+    dir.join(KWS_DIR).join("tokens.txt").is_file() && dir.join(SMALL).is_file() && dir.join(TURBO).is_file()
+}
+
+impl Paths {
+    /// 缺模型就下載到 <app_data_dir>/models。
+    fn ensure_models(&self, progress: impl Fn(u64, u64)) -> Result<(), String> {
+        if ready(&self.models()) && self.models() != self.installed_models() {
+            return Ok(()); // 開發版用 repo 的 models/
+        }
+        crate::models::ensure(&self.installed_models(), &crate::models::builtin(), progress)
     }
 }
 
@@ -245,6 +268,15 @@ impl Host {
             tray::show_problem(&self.0.app, &format!("回答引擎{e}"));
             return;
         }
+        let app = self.0.app.clone();
+        if let Err(e) = self.0.paths.ensure_models(move |d, t| {
+            if t > 0 && d % (t / 100).max(1) < 65_536 {
+                tray::show_problem(&app, &format!("下載模型中…{}%", d * 100 / t));
+            }
+        }) {
+            tray::show_problem(&self.0.app, &format!("模型下載失敗：{e}"));
+            return;
+        }
         tray::show_problem(&self.0.app, "載入中…");
         let p = match MacPlatform::load(&self.0.app, &self.0.paths, &settings) {
             Ok(p) => p,
@@ -299,6 +331,30 @@ pub fn save_settings(host: tauri::State<Host>, s: Settings) -> Result<(), String
     *host.0.settings.lock().unwrap() = s;
     host.restart();
     Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+struct Progress {
+    done: u64,
+    total: u64,
+}
+
+/// 下載缺少的模型，進度用 `models-progress` 事件送給 UI。
+#[tauri::command]
+pub async fn ensure_models(app: AppHandle, host: tauri::State<'_, Host>) -> Result<(), String> {
+    let paths = host.0.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let last = std::cell::Cell::new(0u64);
+        paths.ensure_models(|done, total| {
+            // 每 4 MB 送一次，避免事件洪水
+            if done - last.get() >= 4 << 20 || done == total {
+                last.set(done);
+                let _ = app.emit("models-progress", Progress { done, total });
+            }
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

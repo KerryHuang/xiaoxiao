@@ -27,13 +27,30 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md"
+    },
+    "macOS": {
+      "frameworks": [
+        "../models/sherpa-onnx-lib/lib/libsherpa-onnx-c-api.dylib",
+        "../models/sherpa-onnx-lib/lib/libonnxruntime.dylib"
+      ],
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "-",
+      "hardenedRuntime": false
+    },
+    "category": "Productivity",
+    "shortDescription": "日常語音助理小小"
   }
 }

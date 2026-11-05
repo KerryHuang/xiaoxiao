@@ -76,7 +76,12 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
             try {
               const devs = await listInputs();
               const d = devs.find((x) => !x.bluetooth);
-              if (!d) throw new Error("找不到可用的麥克風");
+              if (!d) {
+                msg.textContent = IS_WINDOWS
+                  ? "這台電腦目前看不到可用的麥克風（藍牙耳機不算）。請確認麥克風已接上；用遠端桌面連線時收不到本機麥克風，請到那台電腦前操作，或在遠端桌面的設定開啟麥克風轉接。"
+                  : "找不到可用的麥克風（藍牙耳機不算），請確認麥克風已接上。";
+                return;
+              }
               // 開一次麥克風讓系統跳出詢問；被拒時 CoreAudio 不報錯，所以要另外問授權狀態
               if ((await micPermission()) === "undetermined") await inputLevel(d.name);
               let p = await micPermission();
@@ -89,7 +94,7 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
               pass(1);
             } catch (e) {
               msg.textContent = IS_WINDOWS
-                ? `沒有成功：${e}。可到「設定 → 隱私權與安全性 → 麥克風」，打開「讓桌面應用程式存取麥克風」。`
+                ? `沒有成功：${e}。可到「設定 → 隱私權與安全性 → 麥克風」，打開最下方的「允許傳統型應用程式存取您的麥克風」（Windows 10 叫「允許桌面應用程式存取您的麥克風」）。`
                 : `沒有成功：${e}。可到「系統設定 → 隱私權與安全性 → 麥克風」打開小小。`;
             }
           },

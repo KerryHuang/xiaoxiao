@@ -9,3 +9,6 @@ pub mod audio;
 pub mod platform;
 pub mod wake;
 pub mod claude;
+pub mod config;
+pub mod events;
+pub mod pause;

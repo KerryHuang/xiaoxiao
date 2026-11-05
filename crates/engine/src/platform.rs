@@ -1,5 +1,50 @@
 //! 平台抽象：各平台實作由獨立 crate 提供。
 
+/// 收音錯誤。`Gone`：裝置消失或串流失效，呼叫端應重開。
+#[derive(Debug, Clone, PartialEq)]
+pub enum AudioError {
+    Gone,
+    NoUsableInput,
+    Other(String),
+}
+
+/// 收音：`read_block` 回 16 kHz、`audio::BLOCK` 長度的區塊。
+pub trait AudioSource: Send {
+    fn open(&mut self, device: Option<&str>) -> Result<(), AudioError>;
+    fn read_block(&mut self) -> Result<Vec<f32>, AudioError>;
+    fn close(&mut self);
+}
+
+/// 有沒有別的程序在用麥克風（通話、會議錄音）。
+pub trait MicUsage {
+    fn others_using_mic(&self) -> bool;
+}
+
+pub trait ScreenState {
+    fn locked(&self) -> bool;
+}
+
+pub trait Speaker: Send {
+    /// 阻塞到說完。
+    fn say(&self, text: &str) -> Result<(), String>;
+    fn chime(&self);
+}
+
+pub trait Notifier {
+    fn notify(&self, title: &str, body: &str);
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InputDevice {
+    pub name: String,
+    pub bluetooth: bool,
+}
+
+pub trait Devices {
+    fn inputs(&self) -> Vec<InputDevice>;
+    fn default_input(&self) -> Option<InputDevice>;
+}
+
 /// 第一關喚醒偵測器：每次餵一個區塊（16 kHz、BLOCK 個樣本），命中回 true。
 pub trait Spotter {
     fn accept(&mut self, block: &[f32]) -> bool;

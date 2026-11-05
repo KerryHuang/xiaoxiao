@@ -1,22 +1,16 @@
-import { invoke } from "@tauri-apps/api/core";
+import { getSettings } from "./api";
+import { onboarding } from "./onboarding";
+import { settingsPage } from "./settings";
 
-let greetInputEl: HTMLInputElement | null;
-let greetMsgEl: HTMLElement | null;
+const root = document.getElementById("app")!;
 
-async function greet() {
-  if (greetMsgEl && greetInputEl) {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsgEl.textContent = await invoke("greet", {
-      name: greetInputEl.value,
-    });
+async function show(forceOnboarding = false) {
+  const s = await getSettings();
+  if (!s.onboarded || forceOnboarding) {
+    onboarding(root, s, () => show());
+  } else {
+    settingsPage(root, s, () => show(true));
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  greetInputEl = document.querySelector("#greet-input");
-  greetMsgEl = document.querySelector("#greet-msg");
-  document.querySelector("#greet-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    greet();
-  });
-});
+show();

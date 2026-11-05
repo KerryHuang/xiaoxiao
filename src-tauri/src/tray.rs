@@ -86,12 +86,7 @@ fn on_menu(app: &AppHandle, id: &str) {
             host.set_muted(on);
             let _ = app.state::<Items>().mute.set_text(if on { "取消靜音" } else { "靜音" });
         }
-        "settings" => {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
-        }
+        "settings" => crate::engine_host::show_window(app),
         "login" => open_login(app, &host),
         "quit" => {
             host.shutdown();

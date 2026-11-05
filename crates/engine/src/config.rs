@@ -18,6 +18,8 @@ pub struct Settings {
     pub hotkey: String,
     pub diagnostic: bool,
     pub engine: EngineKind,
+    /// 走完第一次啟動引導（麥克風權限與 Claude 都過關）才開始待命。
+    pub onboarded: bool,
 }
 
 fn home() -> PathBuf {
@@ -33,6 +35,7 @@ impl Default for Settings {
             hotkey: "Control+Option+Space".into(),
             diagnostic: false,
             engine: EngineKind::ClaudeCli,
+            onboarded: false,
         }
     }
 }
@@ -79,6 +82,7 @@ mod tests {
         assert_eq!(s.hotkey, "Control+Option+Space");
         assert!(s.read_dirs.is_empty());
         assert_eq!(s.engine, EngineKind::ClaudeCli);
+        assert!(!s.onboarded, "第一次啟動要走引導");
         assert!(s.notes_path.ends_with("Documents/小小筆記.md"));
         let mut s2 = s.clone();
         s2.read_dirs.push("/tmp/docs".into());

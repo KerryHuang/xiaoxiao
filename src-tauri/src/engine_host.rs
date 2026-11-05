@@ -236,6 +236,11 @@ impl Host {
 
     fn run_engine(&self, stop: &AtomicBool) {
         let settings = self.0.settings.lock().unwrap().clone();
+        if !settings.onboarded {
+            tray::show_problem(&self.0.app, "還沒完成設定：點「設定…」");
+            show_window(&self.0.app);
+            return;
+        }
         if let Err(e) = settings.validate() {
             tray::show_problem(&self.0.app, &format!("回答引擎{e}"));
             return;
@@ -271,6 +276,13 @@ impl Host {
         if let Err(e) = r {
             eprintln!("快捷鍵 {key} 註冊失敗：{e}");
         }
+    }
+}
+
+pub fn show_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
     }
 }
 

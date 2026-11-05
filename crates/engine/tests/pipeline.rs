@@ -222,6 +222,7 @@ fn timing() -> Timing {
         quick_first_token: Duration::from_secs(5),
         quick_total: Duration::from_secs(10),
         poll: Duration::from_millis(5),
+        auto_rest: Duration::from_secs(3600),
     }
 }
 
@@ -530,6 +531,44 @@ fn wake_during_call_waits_for_call_end() {
     assert_eq!(r.w.lock().unwrap().opens, opens);
     r.w.lock().unwrap().mic_in_use = false;
     r.wait("通話結束才開", |w, _| w.opens == opens + 1);
+}
+
+fn rig_auto_rest(ms: u64, setup: impl FnOnce(&mut World)) -> Rig {
+    let t = Timing { auto_rest: Duration::from_millis(ms), ..timing() };
+    rig_full(tempfile::tempdir().unwrap(), "ok", t, |_| {}, setup)
+}
+
+#[test]
+fn idle_too_long_rests_silently_and_closes_mic() {
+    let r = rig_auto_rest(150, |_| {});
+    r.wait("開麥克風", |w, _| w.opens == 1);
+    r.wait("自動休息", |w, s| s == State::Paused && w.closes >= 1);
+    assert!(r.h.resting(), "要真的進入休息，不只是暫停");
+    assert!(r.said().is_empty(), "自動休息不出聲");
+    assert_eq!(r.w.lock().unwrap().chimes, 0);
+}
+
+#[test]
+fn wake_after_auto_rest_counts_from_zero_again() {
+    let r = rig_auto_rest(150, |_| {});
+    r.wait("自動休息", |w, s| s == State::Paused && w.closes >= 1);
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("叫醒", |w, _| w.said.iter().any(|t| t == "我在"));
+    assert!(!r.h.resting());
+    r.wait("再次自動休息", |w, s| s == State::Paused && w.closes >= 2);
+}
+
+#[test]
+fn call_time_does_not_count_as_idle() {
+    let r = rig_auto_rest(300, |w| w.mic_in_use = true);
+    r.wait("通話暫停", |_, s| s == State::Paused);
+    std::thread::sleep(Duration::from_millis(450));
+    assert!(!r.h.resting(), "通話中不算閒置");
+    r.w.lock().unwrap().mic_in_use = false;
+    r.wait("通話結束", |w, _| w.opens == 1);
+    std::thread::sleep(Duration::from_millis(60));
+    assert!(!r.h.resting(), "通話一結束不能馬上休息");
+    assert_eq!(r.h.state(), State::Idle);
 }
 
 #[test]

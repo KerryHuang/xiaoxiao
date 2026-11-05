@@ -61,6 +61,8 @@ pub struct Timing {
     pub quick_first_token: Duration,
     pub quick_total: Duration,
     pub poll: Duration,
+    /// 待命這麼久沒互動就自動休息（關麥克風）。
+    pub auto_rest: Duration,
 }
 
 impl Default for Timing {
@@ -73,6 +75,7 @@ impl Default for Timing {
             quick_first_token: crate::claude::FIRST_TOKEN_TIMEOUT,
             quick_total: crate::claude::ANSWER_TIMEOUT,
             poll: Duration::from_millis(100),
+            auto_rest: Duration::from_secs(120),
         }
     }
 }
@@ -262,8 +265,18 @@ impl<P: Platform> Engine<P> {
             self.open_audio();
         }
         let mut last_check = Instant::now();
+        let mut idle_since = Instant::now();
         while !stop.load(Ordering::SeqCst) {
             self.fire_due();
+            if !matches!(self.state(), State::Idle | State::Degraded) {
+                idle_since = Instant::now();
+            } else if idle_since.elapsed() >= self.timing.auto_rest {
+                // 不出聲：角色閉上眼睛就是提示，突然講話反而嚇人
+                self.log.log("auto_rest", json!({}));
+                self.shared.resting.store(true, Ordering::SeqCst);
+                self.check_pause();
+                continue;
+            }
             if self.shared.recheck.swap(false, Ordering::SeqCst) || last_check.elapsed() >= self.timing.pause_check {
                 last_check = Instant::now();
                 self.check_pause();

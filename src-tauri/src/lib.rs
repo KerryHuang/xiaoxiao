@@ -11,7 +11,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 pub fn run() {
     tauri::Builder::default()
         // 兩個小小會互相當成「別的程式在用麥克風」而一直暫停；要最先註冊
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| engine_host::show_window(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| character::reopen(app)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -36,10 +36,21 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|w, e| {
-            // 關設定視窗只是藏起來，小小繼續待命
-            if let WindowEvent::CloseRequested { api, .. } = e {
-                api.prevent_close();
-                let _ = w.hide();
+            let app = w.app_handle();
+            match e {
+                // 關視窗只是藏起來，小小繼續待命
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    if w.label() == "main" {
+                        let _ = w.hide();
+                        // 重走引導到一半關掉，角色要回來
+                        character::set_onboarding(app, false);
+                    } else {
+                        character::set_hidden(app, true);
+                    }
+                }
+                WindowEvent::Moved(p) if w.label() == "character" => character::on_moved(app, p.x, p.y),
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -53,7 +64,12 @@ pub fn run() {
             engine_host::check_claude,
             engine_host::check_voice,
             engine_host::test_wake,
+            engine_host::set_character,
             character::character_state,
+            character::character_click,
+            character::character_menu,
+            character::set_onboarding_open,
+            character::finish_onboarding,
         ])
         .run(tauri::generate_context!())
         .expect("小小啟動失敗");

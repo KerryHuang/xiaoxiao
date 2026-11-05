@@ -6,6 +6,7 @@ use std::thread::JoinHandle;
 
 use chrono::{DateTime, FixedOffset};
 use engine::audio::{Agc, RingBuffer, rms};
+use engine::character::CharacterKind;
 use engine::claude::{ClaudeCfg, find_claude};
 use engine::config::{Settings, home};
 use engine::pause::PauseReason;
@@ -234,6 +235,10 @@ impl Host {
         self.0.settings.lock().unwrap().clone()
     }
 
+    pub fn character_pos_path(&self) -> PathBuf {
+        self.0.paths.data.join("character-pos.json")
+    }
+
     pub fn claude_bin(&self) -> PathBuf {
         claude_cfg(&self.0.paths, &self.0.settings.lock().unwrap()).bin
     }
@@ -362,6 +367,19 @@ pub fn save_settings(host: tauri::State<Host>, s: Settings) -> Result<(), String
     s.save(&host.0.paths.settings)?;
     *host.0.settings.lock().unwrap() = s;
     host.restart();
+    Ok(())
+}
+
+/// 換造型立刻生效；不必重啟引擎，模型不用重新載入。
+#[tauri::command]
+pub fn set_character(app: AppHandle, host: tauri::State<Host>, kind: CharacterKind) -> Result<(), String> {
+    {
+        let mut current = host.0.settings.lock().unwrap();
+        let next = Settings { character: kind, ..current.clone() };
+        next.save(&host.0.paths.settings)?;
+        *current = next;
+    }
+    character::emit_view(&app);
     Ok(())
 }
 

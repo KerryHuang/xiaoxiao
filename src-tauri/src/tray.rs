@@ -16,6 +16,7 @@ struct Items {
     menu: Menu<Wry>,
     status: MenuItem<Wry>,
     rest: MenuItem<Wry>,
+    character: MenuItem<Wry>,
     login: MenuItem<Wry>,
     login_shown: Mutex<bool>,
 }
@@ -65,11 +66,12 @@ fn icon_for(s: State) -> &'static str {
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let status = MenuItem::with_id(app, "status", "啟動中…", false, None::<&str>)?;
     let rest = MenuItem::with_id(app, "rest", "休息", true, None::<&str>)?;
+    let character = MenuItem::with_id(app, "toggle_character", character_text(false), true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "設定…", true, None::<&str>)?;
     let login = MenuItem::with_id(app, "login", "去登入 Claude", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "結束小小", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&status, &sep, &rest, &settings, &quit])?;
+    let menu = Menu::with_items(app, &[&status, &sep, &rest, &character, &settings, &quit])?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon("idle"))
         .icon_as_template(true)
@@ -83,7 +85,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    app.manage(Items { menu, status, rest, login, login_shown: Mutex::new(false) });
+    app.manage(Items { menu, status, rest, character, login, login_shown: Mutex::new(false) });
     Ok(())
 }
 
@@ -97,8 +99,10 @@ fn on_menu(app: &AppHandle, id: &str) {
             } else {
                 host.trigger(Trigger::TrayClick);
             }
-            show_rest(app, on);
+            show_rest(app, host.resting());
         }
+        "toggle_character" => crate::character::set_hidden(app, !crate::character::is_hidden(app)),
+        "hide_character" => crate::character::set_hidden(app, true),
         "settings" => crate::engine_host::show_window(app),
         "login" => open_login(app, &host),
         "quit" => {
@@ -140,8 +144,20 @@ pub fn show_state(app: &AppHandle, s: State) {
     set(app, status_text(s), icon_for(s), s == State::Degraded);
 }
 
+pub fn rest_text(resting: bool) -> &'static str {
+    if resting { "叫醒" } else { "休息" }
+}
+
+fn character_text(hidden: bool) -> &'static str {
+    if hidden { "顯示小角色" } else { "隱藏小角色" }
+}
+
 pub fn show_rest(app: &AppHandle, resting: bool) {
-    let _ = app.state::<Items>().rest.set_text(if resting { "叫醒" } else { "休息" });
+    let _ = app.state::<Items>().rest.set_text(rest_text(resting));
+}
+
+pub fn show_character_hidden(app: &AppHandle, hidden: bool) {
+    let _ = app.state::<Items>().character.set_text(character_text(hidden));
 }
 
 pub fn show_problem(app: &AppHandle, msg: &str) {

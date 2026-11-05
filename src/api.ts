@@ -31,6 +31,9 @@ export const requestMicPermission = () => invoke<MicPermission>("request_mic_per
 export const checkClaude = () => invoke<string>("check_claude");
 export const checkVoice = () => invoke<boolean>("check_voice");
 export const testWake = () => invoke<boolean>("test_wake");
+export const setCharacter = (kind: CharacterKind) => invoke<void>("set_character", { kind });
+export const setOnboardingOpen = (open: boolean) => invoke<void>("set_onboarding_open", { open });
+export const finishOnboarding = () => invoke<void>("finish_onboarding");
 
 /** RMS 轉 dB；0 視為 -120 dB。 */
 export const toDb = (rms: number) => (rms > 0 ? 20 * Math.log10(rms) : -120);

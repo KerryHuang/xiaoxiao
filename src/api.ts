@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export const IS_WINDOWS = navigator.userAgent.includes("Windows");
+
 export type EngineKind = "ClaudeCli" | "ApiKey";
 export interface Settings {
   input_device: string | null;

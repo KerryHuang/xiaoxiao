@@ -1,5 +1,6 @@
 mod engine_host;
 mod models;
+mod os;
 mod tray;
 
 use tauri::{Manager, WindowEvent};

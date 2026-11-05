@@ -1,4 +1,5 @@
-"""產生選單列 template 圖示（黑色＋透明，macOS 會依深淺色自動反白）。不需第三方套件。"""
+"""產生選單列 template 圖示（黑色＋透明，macOS 會依深淺色自動反白），
+以及 Windows 系統匣用的彩色圖示（工作列可能深色也可能淺色，黑色會看不見）。不需第三方套件。"""
 import math
 import struct
 import zlib
@@ -8,8 +9,8 @@ S = 64
 OUT = Path(__file__).resolve().parent.parent / "src-tauri" / "icons"
 
 
-def png(path: Path, alpha) -> None:
-    rows = b"".join(b"\x00" + b"".join(bytes((0, 0, 0, alpha(x, y))) for x in range(S)) for y in range(S))
+def png(path: Path, alpha, rgb=(0, 0, 0)) -> None:
+    rows = b"".join(b"\x00" + b"".join(bytes((*rgb, alpha(x, y))) for x in range(S)) for y in range(S))
     def chunk(t, d):
         return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
     data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", S, S, 8, 6, 0, 0, 0))
@@ -41,6 +42,12 @@ def warning(x, y):
     return edge or mark
 
 
-for name, f in [("idle", ring), ("listening", disc), ("paused", paused), ("warning", warning)]:
+for name, f, rgb in [
+    ("idle", ring, (47, 125, 225)),
+    ("listening", disc, (47, 125, 225)),
+    ("paused", paused, (128, 128, 128)),
+    ("warning", warning, (232, 140, 0)),
+]:
     png(OUT / f"tray-{name}.png", cover(f))
-    print("寫入", f"tray-{name}.png")
+    png(OUT / f"tray-win-{name}.png", cover(f), rgb)
+    print("寫入", f"tray-{name}.png", f"tray-win-{name}.png")

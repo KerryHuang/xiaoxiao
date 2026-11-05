@@ -1,4 +1,5 @@
 import {
+  IS_WINDOWS,
   type InputDevice,
   type Settings,
   checkClaude,
@@ -66,12 +67,12 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
     const msg = h("p", { class: "hint" });
     body.append(
       h("h2", {}, "1. 允許使用麥克風"),
-      h("p", {}, "小小要一直聽著才聽得到「嘿，小小」，所以選單列的橘色麥克風燈號會一直亮著。聲音只在這台電腦上處理，不會存檔或上傳；開會、通話時會自動暫停。"),
+      h("p", {}, `小小要一直聽著才聽得到「嘿，小小」，所以${IS_WINDOWS ? "工作列的麥克風圖示" : "選單列的橘色麥克風燈號"}會一直亮著。聲音只在這台電腦上處理，不會存檔或上傳；開會、通話時會自動暫停。`),
       h(
         "button",
         {
           onclick: async () => {
-            msg.textContent = "請在系統視窗按「允許」…";
+            msg.textContent = IS_WINDOWS ? "檢查中…" : "請在系統視窗按「允許」…";
             try {
               const devs = await listInputs();
               const d = devs.find((x) => !x.bluetooth);
@@ -87,7 +88,9 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
               if (p !== "authorized") throw new Error(p === "undetermined" ? "還沒有回應系統的詢問" : "麥克風權限被關閉");
               pass(1);
             } catch (e) {
-              msg.textContent = `沒有成功：${e}。可到「系統設定 → 隱私權與安全性 → 麥克風」打開小小。`;
+              msg.textContent = IS_WINDOWS
+                ? `沒有成功：${e}。可到「設定 → 隱私權與安全性 → 麥克風」，打開「讓桌面應用程式存取麥克風」。`
+                : `沒有成功：${e}。可到「系統設定 → 隱私權與安全性 → 麥克風」打開小小。`;
             }
           },
         },
@@ -143,11 +146,12 @@ export function onboarding(root: HTMLElement, settings: Settings, done: () => vo
     body.append(h("h2", {}, "3. 小小的聲音"), msg);
     checkVoice().then((ok) => {
       if (ok) {
-        msg.textContent = "已安裝「美佳」語音。";
+        msg.textContent = IS_WINDOWS ? "已安裝台灣國語語音。" : "已安裝「美佳」語音。";
         passed.add(3);
       } else {
-        msg.textContent =
-          "還沒有「美佳」語音：到「系統設定 → 輔助使用 → 閱讀與朗讀 → 系統聲音旁的 ⓘ → 聲音」，搜尋並下載「美佳」，再按重新檢查。";
+        msg.textContent = IS_WINDOWS
+          ? "還沒有台灣國語語音：到「設定 → 時間與語言 → 語言與地區」新增「中文（繁體，台灣）」並勾選語音，再按重新檢查。"
+          : "還沒有「美佳」語音：到「系統設定 → 輔助使用 → 閱讀與朗讀 → 系統聲音旁的 ⓘ → 聲音」，搜尋並下載「美佳」，再按重新檢查。";
       }
     });
     body.append(h("button", { class: "ghost", onclick: render }, "重新檢查"));

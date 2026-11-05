@@ -1,4 +1,4 @@
-//! 選單列圖示與選單。
+//! 選單列（Windows 是系統匣）圖示與選單。
 use std::sync::Mutex;
 
 use engine::pipeline::{State, Trigger};
@@ -21,6 +21,15 @@ struct Items {
 }
 
 fn icon(name: &str) -> Image<'static> {
+    // Windows 工作列可能深色也可能淺色，黑色 template 圖示會看不見，改用彩色的
+    #[cfg(windows)]
+    let bytes: &'static [u8] = match name {
+        "listening" => include_bytes!("../icons/tray-win-listening.png"),
+        "paused" => include_bytes!("../icons/tray-win-paused.png"),
+        "warning" => include_bytes!("../icons/tray-win-warning.png"),
+        _ => include_bytes!("../icons/tray-win-idle.png"),
+    };
+    #[cfg(not(windows))]
     let bytes: &'static [u8] = match name {
         "listening" => include_bytes!("../icons/tray-listening.png"),
         "paused" => include_bytes!("../icons/tray-paused.png"),
@@ -96,17 +105,9 @@ fn on_menu(app: &AppHandle, id: &str) {
     }
 }
 
-/// 開「終端機」執行使用者自己的 claude，讓使用者在官方 CLI 裡登入；小小不碰帳號。
+/// 開終端機執行使用者自己的 claude，讓使用者在官方 CLI 裡登入；小小不碰帳號。
 fn open_login(app: &AppHandle, host: &Host) {
-    let bin = host.claude_bin();
-    let cmd = format!("'{}'", bin.to_string_lossy().replace('\'', r"'\''"));
-    let script = format!(
-        "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
-        cmd.replace('\\', "\\\\").replace('"', "\\\"")
-    );
-    let _ = std::process::Command::new("osascript").args(["-e", &script]).spawn().map(|mut c| {
-        std::thread::spawn(move || c.wait());
-    });
+    crate::os::open_terminal(&host.claude_bin());
     let _ = app
         .notification()
         .builder()

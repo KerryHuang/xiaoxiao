@@ -7,14 +7,14 @@ use std::thread::JoinHandle;
 use chrono::{DateTime, FixedOffset};
 use engine::audio::{Agc, RingBuffer, rms};
 use engine::claude::{ClaudeCfg, find_claude};
-use engine::config::Settings;
+use engine::config::{Settings, home};
 use engine::pipeline::{Engine, EngineHandle, Platform, Trigger};
 use engine::platform::*;
-use platform_mac::{MacAudio, MacDevices, MacMicUsage, MacScreen, MacSpeaker};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+use crate::os::{self, OsAudio, OsDevices, OsMicUsage, OsScreen, OsSpeaker};
 use crate::tray;
 
 const KWS_DIR: &str = "kws";
@@ -31,29 +31,29 @@ impl Notifier for TauriNotifier {
     }
 }
 
-pub struct MacPlatform {
-    audio: MacAudio,
+pub struct OsPlatform {
+    audio: OsAudio,
     spotter: kws::Spotter,
     small: asr::Whisper,
     turbo: asr::Whisper,
-    mic: MacMicUsage,
-    speaker: MacSpeaker,
+    mic: OsMicUsage,
+    speaker: OsSpeaker,
     notifier: TauriNotifier,
     claude: ClaudeCfg,
     data: PathBuf,
     logs: PathBuf,
 }
 
-impl MacPlatform {
-    fn load(app: &AppHandle, paths: &Paths, settings: &Settings) -> Result<MacPlatform, String> {
-        let models = paths.models();
-        Ok(MacPlatform {
-            audio: platform_mac::new_audio(),
+impl OsPlatform {
+    fn load(app: &AppHandle, paths: &Paths, settings: &Settings) -> Result<OsPlatform, String> {
+        let models = os::model_path(&paths.models())?;
+        Ok(OsPlatform {
+            audio: os::new_audio(),
             spotter: kws::Spotter::new(&models.join(KWS_DIR))?,
             small: asr::Whisper::new(&models.join(SMALL))?,
             turbo: asr::Whisper::new(&models.join(TURBO))?,
-            mic: MacMicUsage::new(),
-            speaker: MacSpeaker,
+            mic: OsMicUsage::new(),
+            speaker: OsSpeaker,
             notifier: TauriNotifier(app.clone()),
             claude: claude_cfg(paths, settings),
             data: paths.data.clone(),
@@ -62,7 +62,7 @@ impl MacPlatform {
     }
 }
 
-impl Platform for MacPlatform {
+impl Platform for OsPlatform {
     fn audio(&mut self) -> &mut dyn AudioSource {
         &mut self.audio
     }
@@ -79,7 +79,7 @@ impl Platform for MacPlatform {
         &self.mic
     }
     fn screen(&self) -> &dyn ScreenState {
-        &MacScreen
+        &OsScreen
     }
     fn speaker(&self) -> &dyn Speaker {
         &self.speaker
@@ -101,15 +101,10 @@ impl Platform for MacPlatform {
     }
 }
 
-fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
-}
-
-/// 從 Finder 或登入項目啟動時 PATH 只有系統目錄，補上 claude 常見的安裝位置。
 fn search_path() -> String {
     let h = home();
     let mut dirs: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
-    for d in [h.join(".local/bin"), h.join(".claude/local"), "/opt/homebrew/bin".into(), "/usr/local/bin".into()] {
+    for d in os::claude_dirs(&h) {
         if !dirs.contains(&d) {
             dirs.push(d);
         }
@@ -118,7 +113,8 @@ fn search_path() -> String {
 }
 
 fn claude_cfg(paths: &Paths, settings: &Settings) -> ClaudeCfg {
-    let bin = find_claude(&search_path(), &home().join("Library/Application Support/Claude")).unwrap_or_else(|| "claude".into());
+    let path = search_path();
+    let bin = os::desktop_roots(&home()).iter().find_map(|r| find_claude(&path, r)).unwrap_or_else(|| "claude".into());
     let workdir = paths.data.join("workdir");
     let _ = std::fs::create_dir_all(&workdir);
     ClaudeCfg { bin, workdir, read_dirs: settings.read_dirs.clone() }
@@ -188,7 +184,7 @@ struct Inner {
     running: Mutex<Option<Running>>,
     handle: Mutex<Option<EngineHandle>>,
     muted: AtomicBool,
-    meter: Mutex<Option<(String, MacAudio)>>,
+    meter: Mutex<Option<(String, OsAudio)>>,
 }
 
 #[derive(Clone)]
@@ -280,7 +276,7 @@ impl Host {
             return;
         }
         tray::show_problem(&self.0.app, "載入中…");
-        let p = match MacPlatform::load(&self.0.app, &self.0.paths, &settings) {
+        let p = match OsPlatform::load(&self.0.app, &self.0.paths, &settings) {
             Ok(p) => p,
             Err(e) => {
                 tray::show_problem(&self.0.app, &format!("無法啟動：{e}"));
@@ -361,7 +357,7 @@ pub async fn ensure_models(app: AppHandle, host: tauri::State<'_, Host>) -> Resu
 
 #[tauri::command]
 pub fn list_inputs() -> Vec<InputDevice> {
-    MacDevices.inputs()
+    OsDevices.inputs()
 }
 
 /// 指定裝置最近 100 ms 的 RMS。裝置保持開著，換裝置或 stop_input_level 才關。
@@ -371,7 +367,7 @@ pub async fn input_level(host: tauri::State<'_, Host>, device: String) -> Result
     tauri::async_runtime::spawn_blocking(move || {
         let mut m = h.0.meter.lock().unwrap();
         if m.as_ref().is_none_or(|(d, _)| *d != device) {
-            let mut a = platform_mac::new_audio();
+            let mut a = os::new_audio();
             a.open(Some(&device)).map_err(|e| format!("開不了這支麥克風：{e:?}"))?;
             *m = Some((device, a));
         }
@@ -387,11 +383,11 @@ pub async fn input_level(host: tauri::State<'_, Host>, device: String) -> Result
 /// 麥克風授權狀態：authorized／denied／restricted／undetermined。
 #[tauri::command]
 pub fn mic_permission() -> &'static str {
-    match platform_mac::mic_permission() {
-        platform_mac::MicPermission::Authorized => "authorized",
-        platform_mac::MicPermission::Denied => "denied",
-        platform_mac::MicPermission::Restricted => "restricted",
-        platform_mac::MicPermission::NotDetermined => "undetermined",
+    match os::mic_permission() {
+        os::MicPermission::Authorized => "authorized",
+        os::MicPermission::Denied => "denied",
+        os::MicPermission::Restricted => "restricted",
+        os::MicPermission::NotDetermined => "undetermined",
     }
 }
 
@@ -409,11 +405,7 @@ pub async fn check_claude(host: tauri::State<'_, Host>) -> Result<String, String
 
 #[tauri::command]
 pub fn check_voice() -> bool {
-    std::process::Command::new("say")
-        .args(["-v", "?"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("Meijia"))
-        .unwrap_or(false)
+    os::voice_ok()
 }
 
 /// 試喊：10 秒內有一次通過兩關喚醒就回 true。測試期間引擎靜音，避免它也回應。
@@ -424,10 +416,10 @@ pub async fn test_wake(host: tauri::State<'_, Host>) -> Result<bool, String> {
     h.set_muted(true);
     let r = tauri::async_runtime::spawn_blocking(move || {
         let settings = h.0.settings.lock().unwrap().clone();
-        let models = h.0.paths.models();
+        let models = os::model_path(&h.0.paths.models())?;
         let mut spotter = kws::Spotter::new(&models.join(KWS_DIR))?;
         let small = asr::Whisper::new(&models.join(SMALL))?;
-        let mut a = platform_mac::new_audio();
+        let mut a = os::new_audio();
         a.open(settings.input_device.as_deref()).map_err(|e| format!("{e:?}"))?;
         let (mut agc, mut ring) = (Agc::default(), RingBuffer::new(3.9));
         let mut read = |agc: &mut Agc, ring: &mut RingBuffer| -> Result<Vec<f32>, String> {

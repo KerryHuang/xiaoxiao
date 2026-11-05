@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { type Settings, h, listInputs, saveSettings } from "./api";
+import { IS_WINDOWS, type Settings, h, listInputs, saveSettings } from "./api";
 
 /** 設定頁。儲存後引擎會重新啟動。 */
 export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboarding: () => void) {
@@ -81,7 +81,7 @@ export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboardi
     h("h1", {}, "小小設定"),
     h("section", { class: "card" },
       field("收音麥克風", dev),
-      field("快捷鍵", hotkey, h("small", {}, "例如 Control+Option+Space")),
+      field("快捷鍵", hotkey, h("small", {}, IS_WINDOWS ? "例如 Control+Alt+Space" : "例如 Control+Option+Space")),
       field("可讀資料夾",
         h("p", { class: "hint" }, "這些資料夾的內容可能會送到 Claude；金鑰、.env、.ssh 一律不讀。"),
         dirs, addDir),

@@ -5599,6 +5599,7 @@ dependencies = [
  "engine",
  "kws",
  "platform-mac",
+ "platform-windows",
  "serde",
  "serde_json",
  "sha2",

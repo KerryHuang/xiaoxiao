@@ -22,7 +22,10 @@ pub struct Settings {
     pub onboarded: bool,
 }
 
-fn home() -> PathBuf {
+/// 預設快捷鍵。Windows 鍵盤沒有 Option，寫成 Alt（兩者解析結果相同）。
+pub const DEFAULT_HOTKEY: &str = if cfg!(windows) { "Control+Alt+Space" } else { "Control+Option+Space" };
+
+pub fn home() -> PathBuf {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default()
 }
 
@@ -32,7 +35,7 @@ impl Default for Settings {
             input_device: None,
             read_dirs: vec![],
             notes_path: home().join("Documents").join("小小筆記.md"),
-            hotkey: "Control+Option+Space".into(),
+            hotkey: DEFAULT_HOTKEY.into(),
             diagnostic: false,
             engine: EngineKind::ClaudeCli,
             onboarded: false,
@@ -79,7 +82,7 @@ mod tests {
         let p = t.path().join("settings.json");
         std::fs::write(&p, "{}").unwrap();
         let s = Settings::load(&p).unwrap();
-        assert_eq!(s.hotkey, "Control+Option+Space");
+        assert_eq!(s.hotkey, DEFAULT_HOTKEY);
         assert!(s.read_dirs.is_empty());
         assert_eq!(s.engine, EngineKind::ClaudeCli);
         assert!(!s.onboarded, "第一次啟動要走引導");
@@ -93,7 +96,7 @@ mod tests {
     #[test]
     fn missing_file_gives_defaults() {
         let t = tempfile::tempdir().unwrap();
-        assert_eq!(Settings::load(&t.path().join("none.json")).unwrap().hotkey, "Control+Option+Space");
+        assert_eq!(Settings::load(&t.path().join("none.json")).unwrap().hotkey, DEFAULT_HOTKEY);
     }
 
     #[test]

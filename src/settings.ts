@@ -87,6 +87,10 @@ export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboardi
   const notes = h("input", { value: s.notes_path });
   notes.oninput = () => (s.notes_path = notes.value.trim());
 
+  // 所在地
+  const place = h("input", { value: s.location, placeholder: "例如：台北" });
+  place.oninput = () => (s.location = place.value.trim());
+
   // 診斷模式
   const diagWarn = h("p", { class: "danger" }, "會記錄你說的每一句話，測完請關閉並刪除紀錄。");
   const diag = h("input", { type: "checkbox", checked: s.diagnostic });
@@ -122,6 +126,7 @@ export function settingsPage(root: HTMLElement, initial: Settings, rerunOnboardi
         h("p", { class: "hint" }, "這些資料夾的內容可能會送到 Claude；金鑰、.env、.ssh 一律不讀。"),
         dirs, addDir),
       field("筆記檔位置", notes),
+      field("所在地", place, h("small", {}, "問天氣沒講地點時就查這裡；會隨問題送到 Claude。")),
       field("診斷模式", h("label", {}, diag, " 開啟"), diagWarn),
       field("回答引擎", engine),
       h("div", { class: "row" }, save, h("button", { class: "ghost", onclick: rerunOnboarding }, "重新走一次引導")),

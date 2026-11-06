@@ -12,7 +12,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use crate::prompts::lookup_prompt;
 
 pub const IDLE_RESET: Duration = Duration::from_secs(5 * 60);
-pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(30);
+pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(45);
 /// 快答等第一段文字的上限、整個回答的上限；超過就砍掉程序回 Timeout，引擎不會卡住。
 pub const FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(15);
 pub const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
@@ -46,6 +46,8 @@ pub struct ClaudeCfg {
     pub bin: PathBuf,
     pub workdir: PathBuf,
     pub read_dirs: Vec<PathBuf>,
+    /// 使用者所在地，查天氣這類跟地點有關的事要用；空字串代表沒設定。
+    pub location: String,
 }
 
 #[derive(Debug)]
@@ -138,7 +140,7 @@ pub fn session_args(model: &str, system_prompt: &str) -> Vec<String> {
 }
 
 pub fn lookup_args(cfg: &ClaudeCfg, question: &str) -> Vec<String> {
-    let mut a: Vec<String> = ["-p", question, "--model", "sonnet", "--output-format", "json", "--append-system-prompt", lookup_prompt()]
+    let mut a: Vec<String> = ["-p", question, "--model", "sonnet", "--output-format", "json", "--append-system-prompt", &lookup_prompt(&cfg.location)]
         .iter()
         .map(|s| s.to_string())
         .collect();

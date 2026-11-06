@@ -23,6 +23,8 @@ pub struct Settings {
     pub onboarded: bool,
     /// 桌面小角色的造型。位置另存檔案，免得設定頁存檔時蓋回舊位置。
     pub character: CharacterKind,
+    /// 所在地（例如「台北」），查天氣這類跟地點有關的事要用；空字串代表沒設定。
+    pub location: String,
 }
 
 /// 預設快捷鍵。Windows 鍵盤沒有 Option，寫成 Alt（兩者解析結果相同）。
@@ -43,6 +45,7 @@ impl Default for Settings {
             engine: EngineKind::ClaudeCli,
             onboarded: false,
             character: CharacterKind::default(),
+            location: String::new(),
         }
     }
 }

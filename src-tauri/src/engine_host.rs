@@ -120,7 +120,7 @@ fn claude_cfg(paths: &Paths, settings: &Settings) -> ClaudeCfg {
     let bin = os::desktop_roots(&home()).iter().find_map(|r| find_claude(&path, r)).unwrap_or_else(|| "claude".into());
     let workdir = paths.data.join("workdir");
     let _ = std::fs::create_dir_all(&workdir);
-    ClaudeCfg { bin, workdir, read_dirs: settings.read_dirs.clone() }
+    ClaudeCfg { bin, workdir, read_dirs: settings.read_dirs.clone(), location: settings.location.clone() }
 }
 
 // ---------- 宿主 ----------

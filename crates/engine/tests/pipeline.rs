@@ -224,7 +224,7 @@ fn fake_claude(dir: &Path, mode: &str) -> ClaudeCfg {
         .or_else(|_| fs::copy(env!("CARGO_BIN_EXE_fake-claude"), &w).map(|_| ()))
         .unwrap();
     fs::write(dir.join("fake-mode.txt"), format!("{mode}\n{}\n", dir.join("claude-args.txt").display())).unwrap();
-    ClaudeCfg { bin: w, workdir: dir.to_path_buf(), read_dirs: vec![] }
+    ClaudeCfg { bin: w, workdir: dir.to_path_buf(), read_dirs: vec![], location: String::new() }
 }
 
 struct Rig {

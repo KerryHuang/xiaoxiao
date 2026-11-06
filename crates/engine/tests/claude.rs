@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 fn cfg(read_dirs: Vec<PathBuf>) -> ClaudeCfg {
-    ClaudeCfg { bin: PathBuf::from("claude"), workdir: std::env::temp_dir(), read_dirs }
+    ClaudeCfg { bin: PathBuf::from("claude"), workdir: std::env::temp_dir(), read_dirs, location: String::new() }
 }
 
 /// 每個測試各自一份假 claude，模式寫在執行檔旁邊，避免平行測試互改環境變數。
@@ -15,7 +15,7 @@ fn fake_with_out(dir: &Path, mode: &str, out: &Path) -> ClaudeCfg {
         .or_else(|_| fs::copy(env!("CARGO_BIN_EXE_fake-claude"), &w).map(|_| ()))
         .unwrap();
     fs::write(dir.join("fake-mode.txt"), format!("{mode}\n{}\n", out.display())).unwrap();
-    ClaudeCfg { bin: w, workdir: dir.to_path_buf(), read_dirs: vec![] }
+    ClaudeCfg { bin: w, workdir: dir.to_path_buf(), read_dirs: vec![], location: String::new() }
 }
 
 fn fake(dir: &Path, mode: &str) -> ClaudeCfg {
@@ -66,6 +66,24 @@ fn lookup_args_no_dirs_web_only() {
     assert!(a.windows(2).any(|w| w == ["--tools", "WebSearch"]));
     assert!(a.windows(2).any(|w| w == ["--model", "sonnet"]));
     assert!(!a.iter().any(|x| x == "--add-dir"));
+}
+
+fn system_prompt(a: &[String]) -> String {
+    let i = a.iter().position(|x| x == "--append-system-prompt").unwrap();
+    a[i + 1].clone()
+}
+
+#[test]
+fn lookup_knows_where_the_user_lives() {
+    let c = ClaudeCfg { location: "高雄".into(), ..cfg(vec![]) };
+    let p = system_prompt(&lookup_args(&c, "今天天氣如何"));
+    assert!(p.contains("使用者住在高雄"), "{p}");
+}
+
+#[test]
+fn lookup_without_location_mentions_no_place() {
+    let c = ClaudeCfg { location: "  ".into(), ..cfg(vec![]) };
+    assert!(!system_prompt(&lookup_args(&c, "q")).contains("使用者住在"));
 }
 
 #[test]
@@ -122,7 +140,7 @@ async fn warm_process_that_died_is_replaced_on_ask() {
 #[tokio::test]
 async fn warm_with_missing_binary_is_not_found() {
     let t = tempfile::tempdir().unwrap();
-    let c = ClaudeCfg { bin: t.path().join("nope"), workdir: t.path().into(), read_dirs: vec![] };
+    let c = ClaudeCfg { bin: t.path().join("nope"), workdir: t.path().into(), read_dirs: vec![], location: String::new() };
     assert!(matches!(Session::new(c, "haiku", "SP").warm(), Err(ClaudeError::NotFound)));
 }
 
@@ -154,7 +172,7 @@ async fn session_detects_not_logged_in() {
 #[tokio::test]
 async fn session_missing_binary_is_not_found() {
     let t = tempfile::tempdir().unwrap();
-    let c = ClaudeCfg { bin: t.path().join("nope"), workdir: t.path().into(), read_dirs: vec![] };
+    let c = ClaudeCfg { bin: t.path().join("nope"), workdir: t.path().into(), read_dirs: vec![], location: String::new() };
     let mut s = Session::new(c, "haiku", "SP");
     assert!(matches!(s.ask("q", |_| {}).await, Err(ClaudeError::NotFound)));
 }
@@ -248,7 +266,7 @@ async fn check_detects_not_logged_in() {
 #[tokio::test]
 async fn check_missing_binary() {
     let t = tempfile::tempdir().unwrap();
-    let c = ClaudeCfg { bin: t.path().join("nope"), workdir: t.path().into(), read_dirs: vec![] };
+    let c = ClaudeCfg { bin: t.path().join("nope"), workdir: t.path().into(), read_dirs: vec![], location: String::new() };
     assert!(matches!(check(&c).await, Err(ClaudeError::NotFound)));
 }
 

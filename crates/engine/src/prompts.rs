@@ -22,8 +22,12 @@ pub fn quick_message(now: DateTime<FixedOffset>, question: &str) -> String {
 }
 
 /// 慢路線查資料。
-pub fn lookup_prompt() -> &'static str {
-    "你是語音助理「小小」。用工具查到答案後，只用一兩句口語繁體中文講結論，不用條列或符號；查不到就直說查不到。"
+pub fn lookup_prompt(location: &str) -> String {
+    let base = "你是語音助理「小小」。用工具查到答案後，只用一兩句口語繁體中文講結論，不用條列或符號；查不到就直說查不到。";
+    match location.trim() {
+        "" => base.to_string(),
+        l => format!("{base}\n使用者住在{l}；問天氣等跟地點有關的事，沒講地點就當作{l}。"),
+    }
 }
 
 /// 做事前確認對話。
@@ -55,6 +59,6 @@ mod tests {
         assert!(m.contains("2026-11-05 09:30") && m.ends_with("下週一是幾號"));
         let c = confirm_prompt(now);
         assert!(c.contains("<<DO>>") && c.contains("<<CANCEL>>") && c.contains("07:00") && c.contains("+08:00"));
-        assert!(!lookup_prompt().is_empty());
+        assert!(!lookup_prompt("").is_empty());
     }
 }

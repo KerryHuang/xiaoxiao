@@ -14,6 +14,7 @@ export interface Settings {
   engine: EngineKind;
   onboarded: boolean;
   character: CharacterKind;
+  location: string;
 }
 export interface InputDevice {
   name: string;

@@ -12,7 +12,7 @@ async fn main() {
         .expect("找不到 claude");
     let workdir = std::env::temp_dir().join("xiaoxiao-workdir");
     std::fs::create_dir_all(&workdir).unwrap();
-    let mut s = Session::new(ClaudeCfg { bin, workdir, read_dirs: vec![] }, "haiku", engine::prompts::quick_prompt());
+    let mut s = Session::new(ClaudeCfg { bin, workdir, read_dirs: vec![], location: String::new() }, "haiku", engine::prompts::quick_prompt());
     let t0 = Instant::now();
     let mut first = None;
     let r = s.ask(&q, |_| { first.get_or_insert(t0.elapsed()); }).await;

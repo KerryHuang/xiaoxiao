@@ -77,7 +77,7 @@ pub struct SpeechDetector {
 
 const FLOOR_FACTOR: f32 = 3.0;
 /// 剛開麥克風時，先累積這麼多塊（0.5 秒）估雜訊底，期間一律當沒講話。
-const FLOOR_WARMUP: usize = 5;
+pub const FLOOR_WARMUP: usize = 5;
 
 impl SpeechDetector {
     pub fn push(&mut self, raw: &[f32], gain: f32) -> bool {

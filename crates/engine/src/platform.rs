@@ -34,6 +34,8 @@ pub trait Speaker: Send {
     /// 阻塞到說完。
     fn say(&self, text: &str) -> Result<(), String>;
     fn chime(&self);
+    /// 從休息被叫醒的起床音；阻塞到播完，之後才開始收音。
+    fn wake_sound(&self);
 }
 
 pub trait Notifier {

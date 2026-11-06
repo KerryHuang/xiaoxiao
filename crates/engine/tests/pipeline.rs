@@ -44,6 +44,7 @@ struct World {
     /// 設了就用這個時鐘，每讀一次往前一小時。
     clock: Option<DateTime<FixedOffset>>,
     chimes: usize,
+    wake_sounds: usize,
     notes: Vec<(String, String)>,
     mic_in_use: bool,
     default_changed: bool,
@@ -130,6 +131,14 @@ impl Speaker for FakeSpeaker {
     }
     fn chime(&self) {
         self.0.lock().unwrap().chimes += 1;
+    }
+    fn wake_sound(&self) {
+        let mut w = self.0.lock().unwrap();
+        w.wake_sounds += 1;
+        // 喇叭模式：起床音被麥克風收到，不能當成問題
+        for _ in 0..3 {
+            w.script.push_front(Item::Block(Kind::Echo));
+        }
     }
 }
 
@@ -576,13 +585,13 @@ fn rest_disables_wake_until_hotkey() {
     assert_eq!(r.said().len(), 2, "休息時喚醒詞無效");
     r.w.lock().unwrap().script.clear();
     r.h.trigger(Trigger::Hotkey);
-    r.wait("快捷鍵叫醒", |w, s| s == State::Idle && w.said.len() == 3);
-    assert_eq!(r.said()[2], "嗯哼", "叫醒說一聲就回到待命，不開始聽");
+    r.wait("快捷鍵叫醒後沒講話就回待命", |w, s| s == State::Idle && w.wake_sounds == 1);
+    assert_eq!(r.said().len(), 2, "起床只播音效，不說話");
     r.w.lock().unwrap().small.push_back("嘿小小".into());
     r.w.lock().unwrap().turbo.push_back("".into());
     r.push(wake_and_ask());
-    r.wait("叫醒後喊喚醒詞有反應", |w, _| w.said.len() >= 4);
-    assert_eq!(r.said()[3], "我在");
+    r.wait("叫醒後喊喚醒詞有反應", |w, _| w.said.len() >= 3);
+    assert_eq!(r.said()[2], "我在");
 }
 
 #[test]
@@ -629,8 +638,10 @@ fn wake_during_call_waits_for_call_end() {
     r.w.lock().unwrap().mic_in_use = false;
     assert!(r.said().is_empty(), "通話中叫醒不能出聲");
     r.wait("通話結束才開", |w, _| w.opens == opens + 1);
-    r.wait("開了才說", |w, s| s == State::Idle && w.said.len() == 1);
-    assert_eq!(r.said(), ["嗯哼"]);
+    r.wait("開了才播起床音", |w, s| s == State::Idle && w.wake_sounds == 1);
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(r.h.state(), State::Idle, "暫停結束不能自動聽問題，那時使用者可能不在等它");
+    assert!(r.said().is_empty());
 }
 
 fn rig_auto_rest(ms: u64, setup: impl FnOnce(&mut World)) -> Rig {
@@ -655,8 +666,8 @@ fn wake_after_auto_rest_counts_from_zero_again() {
     r.h.trigger(Trigger::Hotkey);
     r.wait("叫醒", |w, _| w.opens == 2);
     assert!(!r.h.resting());
-    r.wait("回到待命", |_, s| s == State::Idle);
-    assert_eq!(r.said(), ["嗯哼"], "叫醒只說一聲，等使用者喊喚醒詞");
+    r.wait("沒講話就回到待命", |w, s| s == State::Idle && w.wake_sounds == 1);
+    assert!(r.said().is_empty(), "起床只播音效，不說話");
     r.wait("再次自動休息", |w, s| s == State::Paused && w.closes >= 2);
 }
 
@@ -671,6 +682,23 @@ fn call_time_does_not_count_as_idle() {
     std::thread::sleep(Duration::from_millis(60));
     assert!(!r.h.resting(), "通話一結束不能馬上休息");
     assert_eq!(r.h.state(), State::Idle);
+}
+
+#[test]
+fn click_from_rest_plays_wake_sound_then_listens_for_the_question() {
+    let r = rig("ok", |w| {
+        w.start_resting = true;
+        w.turbo.push_back("一公斤幾公克".into());
+    });
+    r.wait("休息", |_, s| s == State::Paused);
+    // 先留時間估雜訊底，起床音一停馬上開口也要聽得到
+    let mut then_speak = n(Kind::Silence, engine::audio::FLOOR_WARMUP);
+    then_speak.extend(utterance());
+    r.push(then_speak);
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("不用喚醒詞就回答", |w, _| w.said.iter().any(|s| s.contains("1000")));
+    assert_eq!(r.w.lock().unwrap().wake_sounds, 1);
+    assert_eq!(r.said()[0], "一公斤是1000 公克。", "起床音之後不再說「我在」或「嗯哼」");
 }
 
 #[test]

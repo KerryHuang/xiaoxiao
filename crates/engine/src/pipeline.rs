@@ -8,7 +8,7 @@ use chrono::{DateTime, Datelike, FixedOffset, Timelike};
 use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
-use crate::audio::{Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
+use crate::audio::{FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
 use crate::events::EventLog;
@@ -363,11 +363,36 @@ impl<P: Platform> Engine<P> {
     }
 
     /// 從休息叫醒：說一聲就回到待命，等使用者喊喚醒詞。
+    /// 通話或鎖定時點過，暫停結束才補上起床音；這時使用者不一定在等，所以只回到待命、不聽問題。
     fn say_awake(&mut self) {
         self.awake_pending = false;
         if matches!(self.state(), State::Idle | State::Degraded) {
-            self.speak("嗯哼");
+            self.play_wake_sound();
             self.to_idle();
+        }
+    }
+
+    fn play_wake_sound(&mut self) {
+        self.set_state(State::Acking);
+        self.p.speaker().wake_sound();
+        self.after_speaking();
+    }
+
+    /// 從休息被點醒：起床音 → 直接聽問題。沒講話就由 listen 回到待命。
+    fn wake_and_listen(&mut self) {
+        self.awake_pending = false;
+        // 麥克風剛開要先估雜訊底。不先估的話，起床音一停就開口，聲音會被當成雜訊而聽不到
+        for _ in 0..FLOOR_WARMUP {
+            if self.read().is_none() {
+                return;
+            }
+        }
+        if matches!(self.state(), State::Idle | State::Degraded) {
+            self.followups = 0;
+            self.warm_quick();
+            self.play_wake_sound();
+            self.ep = Some(Endpointer::new());
+            self.set_state(State::Listening);
         }
     }
 
@@ -382,7 +407,7 @@ impl<P: Platform> Engine<P> {
             if self.state() == State::Paused {
                 self.open_audio();
             }
-            self.say_awake();
+            self.wake_and_listen();
             return;
         }
         if matches!(self.state(), State::Idle | State::Degraded | State::FollowUp) {

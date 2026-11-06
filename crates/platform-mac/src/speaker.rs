@@ -22,4 +22,12 @@ impl Speaker for MacSpeaker {
             std::thread::spawn(move || c.wait());
         }
     }
+
+    fn wake_sound(&self) {
+        let _ = Command::new("afplay")
+            .arg("/System/Library/Sounds/Glass.aiff")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }

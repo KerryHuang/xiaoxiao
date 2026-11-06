@@ -1,7 +1,7 @@
 //! 說話與提示音：SAPI 的台灣語音（LCID 0x404）。
 //! 每次呼叫都建立物件：COM 物件不是 Send，而 Speaker 要 Send。
 use engine::platform::Speaker;
-use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
+use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT, SND_SYNC};
 use windows::Win32::Media::Speech::{ISpObjectToken, ISpObjectTokenCategory, ISpVoice, SPCAT_VOICES, SPF_IS_NOT_XML, SpObjectTokenCategory, SpVoice};
 use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
 use windows::core::{HSTRING, PCWSTR, w};
@@ -42,5 +42,11 @@ impl Speaker for WinSpeaker {
         let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
         let file = HSTRING::from(format!(r"{root}\Media\Windows Notify Calendar.wav"));
         let _ = unsafe { PlaySoundW(&file, None, SND_FILENAME | SND_ASYNC | SND_NODEFAULT) };
+    }
+
+    fn wake_sound(&self) {
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let file = HSTRING::from(format!(r"{root}\Media\Windows Notify Messaging.wav"));
+        let _ = unsafe { PlaySoundW(&file, None, SND_FILENAME | SND_SYNC | SND_NODEFAULT) };
     }
 }

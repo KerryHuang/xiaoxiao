@@ -7,16 +7,18 @@ fn fmt_now(now: DateTime<FixedOffset>) -> String {
     format!("{} 星期{}", now.format("%Y-%m-%d %H:%M %:z"), wd)
 }
 
-/// 常駐快答：能答就直接答，否則只輸出標記。
-pub fn quick_prompt(now: DateTime<FixedOffset>) -> String {
-    format!(
-        "你是語音助理「小小」，在使用者的電腦上待命。現在是 {}。\n\
+/// 常駐快答：能答就直接答，否則只輸出標記。程序會跨多個問題重用，所以時間不放這裡，放每則訊息。
+pub fn quick_prompt() -> &'static str {
+    "你是語音助理「小小」，在使用者的電腦上待命。每則訊息開頭的 [現在時間 …] 是當下時間，不是使用者說的話。\n\
 你的回答會被唸出來：只用一兩句口語繁體中文，不用條列、符號、markdown，也不要說出你的判斷過程或分類。\n\
 需要查網路、即時資訊，或使用者自己的檔案資料時，整個回覆只輸出 <<LOOKUP>>。\n\
 使用者要你建立、修改、提醒、記錄、計時等改變狀態的事時，整個回覆只輸出 <<ACTION>>。\n\
-其他情況直接回答。",
-        fmt_now(now)
-    )
+其他情況直接回答。"
+}
+
+/// 送給常駐快答的一則訊息：問題前面加上當下時間。
+pub fn quick_message(now: DateTime<FixedOffset>, question: &str) -> String {
+    format!("[現在時間 {}]\n{question}", fmt_now(now))
 }
 
 /// 慢路線查資料。
@@ -46,8 +48,10 @@ mod tests {
     #[test]
     fn prompts_carry_time_and_rules() {
         let now = DateTime::parse_from_rfc3339("2026-11-05T09:30:00+08:00").unwrap();
-        let q = quick_prompt(now);
-        assert!(q.contains("<<LOOKUP>>") && q.contains("<<ACTION>>") && q.contains("2026-11-05"));
+        let q = quick_prompt();
+        assert!(q.contains("<<LOOKUP>>") && q.contains("<<ACTION>>"));
+        let m = quick_message(now, "下週一是幾號");
+        assert!(m.contains("2026-11-05 09:30") && m.ends_with("下週一是幾號"));
         let c = confirm_prompt(now);
         assert!(c.contains("<<DO>>") && c.contains("<<CANCEL>>") && c.contains("07:00") && c.contains("+08:00"));
         assert!(!lookup_prompt().is_empty());

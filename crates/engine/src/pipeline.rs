@@ -15,7 +15,7 @@ use crate::events::EventLog;
 use crate::local_cmd::{LocalCmd, parse_local};
 use crate::pause::{PauseReason, pause_reason};
 use crate::platform::*;
-use crate::prompts::{confirm_prompt, quick_prompt};
+use crate::prompts::{confirm_prompt, quick_message, quick_prompt};
 use crate::router::{Route, route_prefix};
 use crate::sentence::{SentenceSplitter, is_junk_transcript};
 use crate::wake::verify_text;
@@ -553,7 +553,7 @@ impl<P: Platform> Engine<P> {
     fn take_quick(&mut self) -> Session {
         self.quick.take().unwrap_or_else(|| {
             let (first, total) = (self.timing.quick_first_token, self.timing.quick_total);
-            Session::new(self.p.claude(), "haiku", &quick_prompt(self.p.now())).with_timeouts(first, total)
+            Session::new(self.p.claude(), "haiku", quick_prompt()).with_timeouts(first, total)
         })
     }
 
@@ -585,7 +585,7 @@ impl<P: Platform> Engine<P> {
                 set_state_raw(shared, log, State::Speaking);
                 let _ = speaker.say(s);
             };
-            self.rt.block_on(sess.ask(text, |d| {
+            self.rt.block_on(sess.ask(&quick_message(now, text), |d| {
                 if route.is_none() {
                     buf.push_str(d);
                     route = route_prefix(&buf);

@@ -41,6 +41,8 @@ struct World {
     small: VecDeque<String>,
     turbo: VecDeque<String>,
     said: Vec<String>,
+    /// 設了就用這個時鐘，每讀一次往前一小時。
+    clock: Option<DateTime<FixedOffset>>,
     chimes: usize,
     notes: Vec<(String, String)>,
     mic_in_use: bool,
@@ -157,6 +159,7 @@ struct FakePlatform {
     misc: FakeMisc,
     claude: ClaudeCfg,
     dir: PathBuf,
+    world: W,
 }
 
 impl Platform for FakePlatform {
@@ -194,7 +197,14 @@ impl Platform for FakePlatform {
         self.dir.join("events.jsonl")
     }
     fn now(&self) -> DateTime<FixedOffset> {
-        chrono::Local::now().fixed_offset()
+        let mut w = self.world.lock().unwrap();
+        match w.clock {
+            Some(t) => {
+                w.clock = Some(t + chrono::Duration::hours(1));
+                t
+            }
+            None => chrono::Local::now().fixed_offset(),
+        }
     }
 }
 
@@ -252,6 +262,7 @@ fn rig_full(
         misc: FakeMisc(w.clone()),
         claude: fake_claude(dir.path(), mode),
         dir: dir.path().to_path_buf(),
+        world: w.clone(),
     };
     let mut settings = Settings { notes_path: dir.path().join("notes.md"), ..Settings::default() };
     tweak(&mut settings);
@@ -355,6 +366,27 @@ fn claude_question_reaches_claude() {
     });
     let asked = r.dir.path().join("claude-args.txt");
     r.wait("問題送到 claude", |_, _| asked.exists());
+}
+
+#[test]
+fn every_question_carries_the_current_time() {
+    let r = rig("record", |w| {
+        w.clock = Some(DateTime::parse_from_rfc3339("2026-11-05T23:30:00+08:00").unwrap());
+        w.script.extend(wake_and_ask());
+        w.script.extend(utterance());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("下週一是幾號".into());
+        w.turbo.push_back("距離月底還有幾天".into());
+    });
+    let msgs = r.dir.path().join("claude-args.txt");
+    r.wait("兩個問題都送到", |_, _| fs::read_to_string(&msgs).is_ok_and(|s| s.lines().count() == 2));
+    let text = fs::read_to_string(&msgs).unwrap();
+    let times: Vec<&str> = text
+        .lines()
+        .map(|l| l.split("現在時間 ").nth(1).expect("訊息要帶現在時間").split(']').next().unwrap())
+        .collect();
+    assert_ne!(times[0], times[1], "同一個 claude 程序的第二問也要是當下時間：{times:?}");
+    assert!(text.contains("下週一是幾號") && text.contains("距離月底還有幾天"));
 }
 
 #[test]

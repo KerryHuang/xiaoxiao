@@ -92,6 +92,15 @@ fn main() {
                 result("一公斤是1000 公克。");
             });
         }
+        // 把收到的每則訊息逐行記下來
+        "record" => {
+            let path = out.expect("record 模式要有輸出路徑");
+            for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+                let old = std::fs::read_to_string(&path).unwrap_or_default();
+                std::fs::write(&path, format!("{old}{line}\n")).unwrap();
+                result("好。");
+            }
+        }
         // 第一次一啟動就死掉，之後正常回答：模擬預先開好的程序在等待時死掉
         "die-once" => {
             let marker = out.expect("die-once 模式要有輸出路徑");

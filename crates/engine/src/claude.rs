@@ -182,7 +182,7 @@ fn spawn_err(e: std::io::Error) -> ClaudeError {
 }
 
 struct Proc {
-    _child: Child,
+    child: Child,
     stdin: ChildStdin,
     lines: Lines<BufReader<ChildStdout>>,
 }
@@ -219,6 +219,24 @@ impl Session {
         self.last.elapsed()
     }
 
+    /// 先把程序開好，不送任何訊息；之後的 ask 就不用等它啟動。
+    pub fn warm(&mut self) -> Result<(), ClaudeError> {
+        self.drop_stale();
+        if self.proc.is_none() {
+            self.proc = Some(self.spawn()?);
+            self.last = Instant::now();
+        }
+        Ok(())
+    }
+
+    /// 閒置太久的換掉開新對話，避免上下文越積越多；等待時死掉的也不留。
+    fn drop_stale(&mut self) {
+        let dead = self.proc.as_mut().is_some_and(|p| !matches!(p.child.try_wait(), Ok(None)));
+        if dead || self.idle_for() > IDLE_RESET {
+            self.proc = None;
+        }
+    }
+
     fn spawn(&self) -> Result<Proc, ClaudeError> {
         let mut child = quiet(&mut Command::new(&self.cfg.bin))
             .args(&self.args)
@@ -231,13 +249,11 @@ impl Session {
             .map_err(spawn_err)?;
         let stdin = child.stdin.take().ok_or(ClaudeError::Crashed)?;
         let lines = BufReader::new(child.stdout.take().ok_or(ClaudeError::Crashed)?).lines();
-        Ok(Proc { _child: child, stdin, lines })
+        Ok(Proc { child, stdin, lines })
     }
 
     pub async fn ask(&mut self, text: &str, mut on_delta: impl FnMut(&str)) -> Result<String, ClaudeError> {
-        if self.idle_for() > IDLE_RESET {
-            self.proc = None; // 開新對話，避免上下文越積越多
-        }
+        self.drop_stale();
         self.last = Instant::now();
         if self.proc.is_none() {
             self.proc = Some(self.spawn()?);

@@ -84,6 +84,15 @@ fn main() {
                 });
             }
         }
+        // 第一次一啟動就死掉，之後正常回答：模擬預先開好的程序在等待時死掉
+        "die-once" => {
+            let marker = out.expect("die-once 模式要有輸出路徑");
+            if !marker.exists() {
+                std::fs::write(marker, "").unwrap();
+                std::process::exit(1);
+            }
+            each_line(|_| result("一公斤是1000 公克。"));
+        }
         "slow" => std::thread::sleep(Duration::from_secs(40)),
         "args" => {
             std::fs::write(out.expect("args 模式要有輸出路徑"), args.join("\n") + "\n").unwrap();

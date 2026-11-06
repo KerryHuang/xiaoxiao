@@ -445,6 +445,7 @@ impl<P: Platform> Engine<P> {
     /// 「叮」＋「我在」→ 開始聽問題。
     fn ack(&mut self) {
         self.followups = 0;
+        self.warm_quick();
         self.set_state(State::Acking);
         self.p.speaker().chime();
         let _ = self.p.speaker().say("我在");
@@ -549,14 +550,28 @@ impl<P: Platform> Engine<P> {
         self.open_window(State::FollowUp);
     }
 
+    fn take_quick(&mut self) -> Session {
+        self.quick.take().unwrap_or_else(|| {
+            let (first, total) = (self.timing.quick_first_token, self.timing.quick_total);
+            Session::new(self.p.claude(), "haiku", &quick_prompt(self.p.now())).with_timeouts(first, total)
+        })
+    }
+
+    /// 一被叫醒就先開好 claude，使用者問完不用再等它啟動。開不起來也不管，真的問時會回報。
+    fn warm_quick(&mut self) {
+        let mut sess = self.take_quick();
+        {
+            let _rt = self.rt.enter();
+            let _ = sess.warm();
+        }
+        self.quick = Some(sess);
+    }
+
     fn quick_answer(&mut self, text: &str) {
         let cfg = self.p.claude();
         let now = self.p.now();
         let (first, total) = (self.timing.quick_first_token, self.timing.quick_total);
-        let mut sess = self
-            .quick
-            .take()
-            .unwrap_or_else(|| Session::new(cfg.clone(), "haiku", &quick_prompt(now)).with_timeouts(first, total));
+        let mut sess = self.take_quick();
         let mut buf = String::new();
         let mut route = None;
         let mut split = SentenceSplitter::default();

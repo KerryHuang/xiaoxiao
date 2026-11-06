@@ -323,6 +323,18 @@ fn wake_then_quick_answer() {
 }
 
 #[test]
+fn wake_starts_claude_before_the_question() {
+    let r = rig("args", |w| {
+        w.script.extend(n(Kind::Silence, 3));
+        w.script.extend(n(Kind::Wake, 1));
+        w.small.push_back("嘿小小".into());
+    });
+    let args = r.dir.path().join("claude-args.txt");
+    r.wait("喚醒後就先開好 claude", |_, _| args.exists());
+    assert_eq!(r.said(), ["我在"]);
+}
+
+#[test]
 fn rejected_verify_stays_idle() {
     let r = rig("ok", |w| {
         w.script.extend(wake_and_ask());

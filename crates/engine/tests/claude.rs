@@ -89,6 +89,40 @@ async fn session_streams_answer() {
     assert_eq!(s.ask("再一次", |_| {}).await.unwrap(), "一公斤是1000 公克。");
 }
 
+fn wait_for_file(p: &Path) {
+    let t0 = Instant::now();
+    while !p.exists() {
+        assert!(t0.elapsed() < Duration::from_secs(5), "等不到 {}", p.display());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[tokio::test]
+async fn warm_starts_the_process_before_any_question() {
+    let t = tempfile::tempdir().unwrap();
+    let mut s = Session::new(fake(t.path(), "args"), "haiku", "SP");
+    s.warm().unwrap();
+    wait_for_file(&t.path().join("claude-args.txt"));
+}
+
+#[tokio::test]
+async fn warm_process_that_died_is_replaced_on_ask() {
+    let t = tempfile::tempdir().unwrap();
+    let marker = t.path().join("died");
+    let mut s = Session::new(fake_with_out(t.path(), "die-once", &marker), "haiku", "SP");
+    s.warm().unwrap();
+    wait_for_file(&marker);
+    std::thread::sleep(Duration::from_millis(200)); // 等它真的結束
+    assert_eq!(s.ask("q", |_| {}).await.unwrap(), "一公斤是1000 公克。");
+}
+
+#[tokio::test]
+async fn warm_with_missing_binary_is_not_found() {
+    let t = tempfile::tempdir().unwrap();
+    let c = ClaudeCfg { bin: t.path().join("nope"), workdir: t.path().into(), read_dirs: vec![] };
+    assert!(matches!(Session::new(c, "haiku", "SP").warm(), Err(ClaudeError::NotFound)));
+}
+
 #[tokio::test]
 async fn session_survives_garbage_line() {
     let t = tempfile::tempdir().unwrap();

@@ -345,6 +345,7 @@ impl<P: Platform> Engine<P> {
             }
             self.ep = None;
             self.confirm = None;
+            self.quick = None; // 暫停期間不留著 claude 佔記憶體，下次叫醒會重開
             self.set_state(State::Paused);
         } else if !want && matches!(s, State::Paused | State::NoMic) {
             self.open_audio();

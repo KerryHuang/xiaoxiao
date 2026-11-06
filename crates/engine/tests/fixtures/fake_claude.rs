@@ -92,6 +92,13 @@ fn main() {
                 result("一公斤是1000 公克。");
             });
         }
+        // 每次啟動記一行，用來數開了幾個程序
+        "spawns" => {
+            let path = out.expect("spawns 模式要有輸出路徑");
+            let old = std::fs::read_to_string(&path).unwrap_or_default();
+            std::fs::write(&path, format!("{old}spawn\n")).unwrap();
+            each_line(|_| result("好。"));
+        }
         // 把收到的每則訊息逐行記下來
         "record" => {
             let path = out.expect("record 模式要有輸出路徑");

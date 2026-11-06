@@ -369,6 +369,30 @@ fn claude_question_reaches_claude() {
 }
 
 #[test]
+fn resting_closes_the_warm_claude() {
+    let r = rig("spawns", |w| {
+        w.script.extend(n(Kind::Silence, 3));
+        w.script.extend(n(Kind::Wake, 1));
+        w.small.push_back("嘿小小".into());
+    });
+    let spawns = r.dir.path().join("claude-args.txt");
+    let count = || fs::read_to_string(&spawns).map(|s| s.lines().count()).unwrap_or(0);
+    r.wait("第一次叫醒開好 claude", |_, _| count() == 1);
+    r.h.set_resting(true);
+    r.wait("進入休息", |_, s| s == State::Paused);
+    r.h.set_resting(false);
+    r.wait("離開休息", |_, s| s != State::Paused);
+    {
+        let mut w = r.w.lock().unwrap();
+        w.small.push_back("嘿小小".into());
+    }
+    let mut again = n(Kind::Silence, 3);
+    again.extend(n(Kind::Wake, 1));
+    r.push(again);
+    r.wait("休息時舊程序已關，再叫醒要開新的", |_, _| count() == 2);
+}
+
+#[test]
 fn every_question_carries_the_current_time() {
     let r = rig("record", |w| {
         w.clock = Some(DateTime::parse_from_rfc3339("2026-11-05T23:30:00+08:00").unwrap());

@@ -450,6 +450,50 @@ fn local_timer_no_claude() {
 }
 
 #[test]
+fn offtopic_while_confirming_is_answered_as_a_new_question() {
+    let r = rig("action-other", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("明天九點提醒我開會".into());
+        w.turbo.push_back("一公斤幾公克".into());
+    });
+    r.wait("複述", |w, s| w.said.len() == 2 && s == State::Confirming);
+    r.push(utterance());
+    r.wait("偏題改當新問題回答", |w, _| w.said.len() == 3);
+    assert_eq!(r.said()[2], "一公斤是1000 公克。");
+    assert!(!r.dir.path().join("reminders.json").exists(), "偏題不能把提醒設下去");
+}
+
+#[test]
+fn local_command_while_confirming_really_runs() {
+    let r = rig("action", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("明天九點提醒我開會".into());
+        w.turbo.push_back("先休息吧".into());
+    });
+    r.wait("複述", |w, s| w.said.len() == 2 && s == State::Confirming);
+    r.push(utterance());
+    r.wait("真的進入休息", |_, s| s == State::Paused);
+    assert!(r.h.resting(), "嘴上答應不算，要真的休息");
+}
+
+#[test]
+fn nothing_to_confirm_does_not_loop() {
+    let r = rig("action-loop", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("好".into());
+    });
+    let confirmed = r.dir.path().join("claude-args.txt");
+    r.wait("進過確認", |_, _| confirmed.exists());
+    r.wait("回到待命", |_, s| s == State::Idle);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(r.h.state(), State::Idle);
+    assert_eq!(r.said(), ["我在"], "沒事可做就安靜回待命");
+}
+
+#[test]
 fn action_confirm_do_reminder() {
     let r = rig("action", |w| {
         w.script.extend(wake_and_ask());

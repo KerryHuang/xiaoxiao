@@ -92,6 +92,34 @@ fn main() {
                 result("一公斤是1000 公克。");
             });
         }
+        // 確認第一輪複述，第二輪判定偏題；快答第一題要做事，之後直接答
+        "action-other" => {
+            if args.iter().any(|a| a.contains("幫使用者做事")) {
+                each_line(|n| if n == 1 { result("好，明天九點提醒你開會，對嗎？") } else { result("<<OTHER>>") });
+            } else {
+                each_line(|n| {
+                    if n == 1 {
+                        delta("<<ACTION>>");
+                        result("<<ACTION>>");
+                    } else {
+                        delta("一公斤是1000 公克。");
+                        result("一公斤是1000 公克。");
+                    }
+                });
+            }
+        }
+        // 快答永遠說要做事、確認永遠說沒事可做：不能來回打轉
+        "action-loop" => {
+            if args.iter().any(|a| a.contains("幫使用者做事")) {
+                std::fs::write(out.expect("action-loop 模式要有輸出路徑"), "").unwrap();
+                each_line(|_| result("<<OTHER>>"));
+            } else {
+                each_line(|_| {
+                    delta("<<ACTION>>");
+                    result("<<ACTION>>");
+                });
+            }
+        }
         // 快答轉查資料，查資料的結果像真的 WebSearch 一樣附來源
         "lookup-sources" => {
             if args.iter().any(|a| a == "json") {

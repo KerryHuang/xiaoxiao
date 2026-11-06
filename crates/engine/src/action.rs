@@ -19,6 +19,8 @@ pub enum Action {
 pub enum ConfirmOutcome {
     Do(Action),
     Cancel,
+    /// 這句話跟要做的事無關，或根本沒有要做的事
+    Other,
     Say(String),
 }
 
@@ -59,11 +61,14 @@ fn opt_str(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(String::from)
 }
 
-/// 解析確認對話的一次回覆：`<<DO>>{json}`、`<<CANCEL>>`，其餘當成要唸出來的話。
+/// 解析確認對話的一次回覆：`<<DO>>{json}`、`<<CANCEL>>`、`<<OTHER>>`，其餘當成要唸出來的話。
 pub fn parse_confirm_reply(reply: &str, now: DateTime<FixedOffset>) -> Result<ConfirmOutcome, ActionError> {
     let t = reply.trim();
     if t.starts_with("<<CANCEL>>") {
         return Ok(ConfirmOutcome::Cancel);
+    }
+    if t.starts_with("<<OTHER>>") {
+        return Ok(ConfirmOutcome::Other);
     }
     let Some(rest) = t.strip_prefix("<<DO>>") else {
         return Ok(ConfirmOutcome::Say(t.to_string()));
@@ -210,6 +215,7 @@ mod tests {
     #[test]
     fn cancel_and_say() {
         assert!(matches!(parse_confirm_reply("<<CANCEL>>", now()).unwrap(), ConfirmOutcome::Cancel));
+        assert!(matches!(parse_confirm_reply("<<OTHER>>", now()).unwrap(), ConfirmOutcome::Other));
         assert!(matches!(parse_confirm_reply("今天下午三點提醒你開會，對嗎？", now()).unwrap(), ConfirmOutcome::Say(_)));
     }
 

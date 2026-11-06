@@ -529,7 +529,11 @@ impl<P: Platform> Engine<P> {
         if text.is_empty() || is_junk_transcript(&text) {
             self.to_idle();
         } else if confirming {
-            self.confirm_turn(&text);
+            if parse_local(&text).is_some() {
+                self.confirm = None;
+                return self.question(&text);
+            }
+            self.confirm_turn(&text, false);
         } else if followup {
             self.followup_turn(&text);
         } else {
@@ -685,12 +689,13 @@ impl<P: Platform> Engine<P> {
             }
             Route::Action => {
                 self.confirm = Some(Session::new(cfg, "haiku", &confirm_prompt(now)).with_timeouts(first, total));
-                self.confirm_turn(text);
+                self.confirm_turn(text, true);
             }
         }
     }
 
-    fn confirm_turn(&mut self, text: &str) {
+    /// `first`：這句剛被快答判定成要做事。此時確認對話若說沒事可做，不能再送回快答，否則會來回打轉。
+    fn confirm_turn(&mut self, text: &str, first: bool) {
         let Some(mut sess) = self.confirm.take() else { return self.to_idle() };
         self.set_state(State::Thinking);
         let r = self.rt.block_on(sess.ask(text, |_| {}));
@@ -708,6 +713,14 @@ impl<P: Platform> Engine<P> {
             Ok(ConfirmOutcome::Cancel) => {
                 self.speak("好，取消了");
                 self.to_idle();
+            }
+            Ok(ConfirmOutcome::Other) => {
+                self.log.log("confirm_other", json!({"first": first}));
+                if first {
+                    self.to_idle();
+                } else {
+                    self.question(text);
+                }
             }
             Ok(ConfirmOutcome::Do(a)) => {
                 let msg = self.execute(a, now);

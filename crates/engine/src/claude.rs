@@ -167,6 +167,40 @@ pub fn lookup_args(cfg: &ClaudeCfg, question: &str) -> Vec<String> {
     a
 }
 
+/// 這一行是不是「來源」標題（WebSearch 會要求在答案後面列來源）。
+fn is_sources_heading(line: &str) -> bool {
+    let t = line.trim().trim_matches(|c: char| "#*_-: ：".contains(c)).to_lowercase();
+    matches!(t.as_str(), "sources" | "source" | "來源" | "參考資料" | "參考來源")
+}
+
+/// 去掉 `[文字](網址)` 的網址部分，以及裸網址。
+fn strip_links(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix('[')
+            && let Some((label, tail)) = after.split_once("](")
+            && let Some((_, tail)) = tail.split_once(')')
+        {
+            out.push_str(label);
+            rest = tail;
+        } else if rest.starts_with("http://") || rest.starts_with("https://") {
+            rest = rest.trim_start_matches(|c: char| c.is_ascii_graphic());
+        } else {
+            let c = rest.chars().next().unwrap();
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// 查資料的結果轉成要唸的文字：拿掉來源段落和網址，語音念網址沒有意義。
+pub fn spoken_answer(text: &str) -> String {
+    let body: Vec<String> = text.lines().take_while(|l| !is_sources_heading(l)).map(strip_links).collect();
+    body.join("\n").trim().to_string()
+}
+
 /// result 事件 → 答案或錯誤。
 fn result_of(v: &Value) -> Result<String, ClaudeError> {
     let text = v.get("result").and_then(Value::as_str).unwrap_or("");
@@ -348,5 +382,6 @@ pub async fn lookup(cfg: &ClaudeCfg, q: &str, timeout: Duration) -> Result<Strin
     let v: Value = serde_json::from_slice(&out.stdout).map_err(|_| {
         if out.status.success() { ClaudeError::Garbage } else { ClaudeError::Crashed }
     })?;
-    result_of(&v)
+    let answer = spoken_answer(&result_of(&v)?);
+    if answer.is_empty() { Err(ClaudeError::Garbage) } else { Ok(answer) }
 }

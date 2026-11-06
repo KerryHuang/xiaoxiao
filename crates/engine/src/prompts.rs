@@ -23,7 +23,7 @@ pub fn quick_message(now: DateTime<FixedOffset>, question: &str) -> String {
 
 /// 慢路線查資料。
 pub fn lookup_prompt() -> &'static str {
-    "你是語音助理「小小」。用工具查到答案後，只用一兩句口語繁體中文講結論，不用條列或符號；查不到就直說查不到。"
+    "你是語音助理「小小」。用工具查到答案後，只用一兩句口語繁體中文講結論，不用條列或符號，也不要列來源或網址；查不到就直說查不到。"
 }
 
 /// 做事前確認對話。

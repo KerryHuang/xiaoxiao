@@ -92,6 +92,17 @@ fn main() {
                 result("一公斤是1000 公克。");
             });
         }
+        // 快答轉查資料，查資料的結果像真的 WebSearch 一樣附來源
+        "lookup-sources" => {
+            if args.iter().any(|a| a == "json") {
+                result(r"今天有雨，記得帶傘。\n\nSources:\n- [天氣](https://example.com/a)");
+            } else {
+                each_line(|_| {
+                    delta("<<LOOKUP>>");
+                    result("<<LOOKUP>>");
+                });
+            }
+        }
         // 每次啟動記一行，用來數開了幾個程序
         "spawns" => {
             let path = out.expect("spawns 模式要有輸出路徑");

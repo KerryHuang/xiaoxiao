@@ -369,6 +369,18 @@ fn claude_question_reaches_claude() {
 }
 
 #[test]
+fn lookup_answer_is_spoken_without_sources() {
+    let r = rig("lookup-sources", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("今天天氣如何".into());
+    });
+    r.wait("唸完答案", |w, _| w.said.iter().any(|s| s.contains("今天有雨")));
+    let said = r.said().join("");
+    assert!(!said.contains("http") && !said.contains("Sources"), "{said}");
+}
+
+#[test]
 fn resting_closes_the_warm_claude() {
     let r = rig("spawns", |w| {
         w.script.extend(n(Kind::Silence, 3));

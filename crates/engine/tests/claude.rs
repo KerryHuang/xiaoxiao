@@ -257,3 +257,34 @@ async fn session_times_out_waiting_first_token() {
     assert!(matches!(s.ask("q", |_| {}).await, Err(ClaudeError::Timeout)));
     assert!(t0.elapsed() < Duration::from_secs(3));
 }
+
+#[test]
+fn spoken_answer_drops_sources_section() {
+    let raw = "今天北部轉涼有雨，出門記得帶傘。\n\nSources:\n- [11/6天氣預報 (NOWnews)](https://www.nownews.com/news/6889701)\n- [東北季風 (NewTalk)](https://newtalk.tw/news/1)";
+    assert_eq!(spoken_answer(raw), "今天北部轉涼有雨，出門記得帶傘。");
+}
+
+#[test]
+fn spoken_answer_handles_other_source_headings() {
+    for heading in ["**Sources:**", "來源：", "## 參考資料", "sources"] {
+        let raw = format!("答案。\n{heading}\n- https://example.com/a");
+        assert_eq!(spoken_answer(&raw), "答案。", "{heading}");
+    }
+}
+
+#[test]
+fn spoken_answer_removes_inline_links_but_keeps_words() {
+    let raw = "根據[氣象署](https://cwa.gov.tw/x)，今天有雨，詳見 https://example.com/a?b=1。明天放晴。";
+    assert_eq!(spoken_answer(raw), "根據氣象署，今天有雨，詳見 。明天放晴。");
+}
+
+#[test]
+fn spoken_answer_keeps_ordinary_text_about_sources() {
+    let raw = "來源可靠的說法是今天有雨。\n明天會放晴。";
+    assert_eq!(spoken_answer(raw), raw);
+}
+
+#[test]
+fn spoken_answer_of_only_sources_is_empty() {
+    assert_eq!(spoken_answer("Sources:\n- https://example.com/a"), "");
+}

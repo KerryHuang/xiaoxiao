@@ -75,6 +75,17 @@ pub fn run() {
             character::set_onboarding_open,
             character::finish_onboarding,
         ])
-        .run(tauri::generate_context!())
-        .expect("小小啟動失敗");
+        .build(tauri::generate_context!())
+        .expect("小小啟動失敗")
+        .run(|_app, _event| {
+            // whisper 的 Metal 後端在 C++ 收尾時發現模型還沒釋放就會 abort，每次關閉都留下當機報告。
+            // 引擎可能正在等 claude（最久 60 秒），不能等它結束，所以直接結束程序、跳過收尾。
+            #[cfg(target_os = "macos")]
+            if matches!(_event, tauri::RunEvent::Exit) {
+                unsafe extern "C" {
+                    fn _exit(code: i32) -> !;
+                }
+                unsafe { _exit(0) }
+            }
+        });
 }

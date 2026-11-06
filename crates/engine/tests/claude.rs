@@ -10,7 +10,10 @@ fn cfg(read_dirs: Vec<PathBuf>) -> ClaudeCfg {
 /// 每個測試各自一份假 claude，模式寫在執行檔旁邊，避免平行測試互改環境變數。
 fn fake_with_out(dir: &Path, mode: &str, out: &Path) -> ClaudeCfg {
     let w = dir.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
-    fs::copy(env!("CARGO_BIN_EXE_fake-claude"), &w).unwrap();
+    // 硬連結：每次複製新檔案，macOS 可能卡在驗證新執行檔。跨磁碟才複製。
+    fs::hard_link(env!("CARGO_BIN_EXE_fake-claude"), &w)
+        .or_else(|_| fs::copy(env!("CARGO_BIN_EXE_fake-claude"), &w).map(|_| ()))
+        .unwrap();
     fs::write(dir.join("fake-mode.txt"), format!("{mode}\n{}\n", out.display())).unwrap();
     ClaudeCfg { bin: w, workdir: dir.to_path_buf(), read_dirs: vec![] }
 }

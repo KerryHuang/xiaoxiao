@@ -18,7 +18,7 @@ use crate::platform::*;
 use crate::prompts::{confirm_prompt, quick_message, quick_prompt};
 use crate::router::{Route, route_prefix};
 use crate::sentence::{SentenceSplitter, is_junk_transcript};
-use crate::wake::verify_text;
+use crate::wake::{strip_call_name, verify_text};
 
 pub const DEGRADED_MSG: &str = "現在連不上 Claude，我只能報時和計時";
 /// 命中後再收幾塊（0.4 秒）才複核。
@@ -518,6 +518,7 @@ impl<P: Platform> Engine<P> {
         };
         self.ep = None;
         let confirming = self.state() == State::Confirming;
+        let followup = self.state() == State::FollowUp;
         self.set_state(State::Thinking);
         let t0 = Instant::now();
         let text = self.p.transcriber().transcribe(&audio).unwrap_or_default();
@@ -529,8 +530,22 @@ impl<P: Platform> Engine<P> {
             self.to_idle();
         } else if confirming {
             self.confirm_turn(&text);
+        } else if followup {
+            self.followup_turn(&text);
         } else {
             self.question(&text);
+        }
+    }
+
+    /// 追問要先叫名字，不然周圍的聲音都會被當成問題送給 Claude。沒叫名字就不回應，繼續等。
+    fn followup_turn(&mut self, text: &str) {
+        match strip_call_name(text) {
+            None => {
+                self.log.log("followup_ignored", json!({}));
+                self.open_window(State::FollowUp);
+            }
+            Some("") => self.ack(),
+            Some(q) => self.question(q),
         }
     }
 

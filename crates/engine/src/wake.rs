@@ -6,9 +6,37 @@ pub fn verify_text(text: &str) -> bool {
     ["小小", "曉曉", "晓晓"].iter().any(|w| text.contains(w))
 }
 
+/// 追問要先叫名字：開頭是（嘿）小小才回傳後面的話，只叫名字回傳空字串。
+pub fn strip_call_name(text: &str) -> Option<&str> {
+    let skip = |c: char| !c.is_alphanumeric();
+    let t = text.trim_start_matches(skip);
+    let t = ["嘿", "黑", "嗨", "Hey", "hey", "HEY"].iter().find_map(|p| t.strip_prefix(p)).unwrap_or(t);
+    let t = t.trim_start_matches(skip);
+    let rest = ["小小", "曉曉", "晓晓"].iter().find_map(|n| t.strip_prefix(n))?;
+    Some(rest.trim_start_matches(skip).trim_end())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_call_name_needs_the_name_first() {
+        for (t, want) in [
+            ("小小，那兩公斤呢", "那兩公斤呢"),
+            ("小小那兩公斤呢", "那兩公斤呢"),
+            ("曉曉, 明天呢", "明天呢"),
+            ("晓晓 明天呢", "明天呢"),
+            ("嘿，小小，明天呢", "明天呢"),
+            ("Hey 小小 明天呢", "明天呢"),
+            ("小小。", ""),
+        ] {
+            assert_eq!(strip_call_name(t), Some(want), "{t}");
+        }
+        for t in ["那兩公斤呢", "我家小小怎麼了", "這是小事", "嘿你好", "determine这 volks2 won", ""] {
+            assert_eq!(strip_call_name(t), None, "{t}");
+        }
+    }
 
     #[test]
     fn verify_text_tolerant() {

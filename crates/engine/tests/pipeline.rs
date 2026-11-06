@@ -219,7 +219,10 @@ impl Platform for FakePlatform {
 
 fn fake_claude(dir: &Path, mode: &str) -> ClaudeCfg {
     let w = dir.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
-    fs::copy(env!("CARGO_BIN_EXE_fake-claude"), &w).unwrap();
+    // 硬連結：每次複製新檔案，macOS 可能卡在驗證新執行檔，程序停在 dyld 不動。跨磁碟才複製。
+    fs::hard_link(env!("CARGO_BIN_EXE_fake-claude"), &w)
+        .or_else(|_| fs::copy(env!("CARGO_BIN_EXE_fake-claude"), &w).map(|_| ()))
+        .unwrap();
     fs::write(dir.join("fake-mode.txt"), format!("{mode}\n{}\n", dir.join("claude-args.txt").display())).unwrap();
     ClaudeCfg { bin: w, workdir: dir.to_path_buf(), read_dirs: vec![] }
 }
@@ -421,7 +424,7 @@ fn every_question_carries_the_current_time() {
         w.script.extend(utterance());
         w.small.push_back("嘿小小".into());
         w.turbo.push_back("下週一是幾號".into());
-        w.turbo.push_back("距離月底還有幾天".into());
+        w.turbo.push_back("小小，距離月底還有幾天".into());
     });
     let msgs = r.dir.path().join("claude-args.txt");
     r.wait("兩個問題都送到", |_, _| fs::read_to_string(&msgs).is_ok_and(|s| s.lines().count() == 2));
@@ -464,13 +467,13 @@ fn action_confirm_do_reminder() {
 }
 
 #[test]
-fn followup_without_wake_word() {
+fn followup_with_name_is_answered_without_the_name() {
     let r = rig("ok", |w| {
         w.script.extend(wake_and_ask());
-        w.script.extend(utterance()); // 回答完立刻追問，沒有喚醒詞
+        w.script.extend(utterance()); // 回答完立刻追問，只叫名字
         w.small.push_back("嘿小小".into());
         w.turbo.push_back("一公斤幾公克".into());
-        w.turbo.push_back("那兩公斤呢".into());
+        w.turbo.push_back("小小，那兩公斤呢".into());
     });
     r.wait("追問也回答", |w, _| w.said.len() == 3);
     assert_eq!(r.said(), ["我在", "一公斤是1000 公克。", "一公斤是1000 公克。"]);
@@ -779,6 +782,39 @@ fn missed_reminder_notified_on_start() {
 }
 
 #[test]
+fn followup_without_name_never_reaches_claude() {
+    let r = rig("record", |w| {
+        w.script.extend(wake_and_ask());
+        w.script.extend(utterance());
+        w.script.extend(utterance());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+        w.turbo.push_back("determine这 volks2 won".into());
+        w.turbo.push_back("小小，那兩公斤呢".into());
+    });
+    let msgs = r.dir.path().join("claude-args.txt");
+    r.wait("雜音之後叫名字還能問", |_, _| fs::read_to_string(&msgs).is_ok_and(|s| s.lines().count() == 2));
+    r.wait("唸完第二個回答", |w, _| w.said.len() >= 3);
+    let text = fs::read_to_string(&msgs).unwrap();
+    assert!(!text.contains("volks2"), "沒叫名字不能送 claude：{text}");
+    assert!(text.contains("那兩公斤呢") && !text.contains("小小"), "送出前要去掉名字：{text}");
+    assert_eq!(r.said().len(), 3, "沒叫名字不回應：{:?}", r.said());
+}
+
+#[test]
+fn followup_with_only_the_name_asks_what_next() {
+    let r = rig("ok", |w| {
+        w.script.extend(wake_and_ask());
+        w.script.extend(utterance());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+        w.turbo.push_back("小小。".into());
+    });
+    r.wait("只叫名字就回應", |w, s| w.said.len() == 3 && s != State::Speaking);
+    assert_eq!(r.said()[2], "我在");
+}
+
+#[test]
 fn office_noise_does_not_loop_followup() {
     // 回答完進追問窗口（正式值 8 秒），問題的語音峰值擠出 AGC 窗口後增益拉滿；
     // 雜音不能被當成追問、更不能把 whisper 的幻覺字串送去問 Claude。
@@ -808,7 +844,7 @@ fn followup_capped_without_wake() {
             w.script.extend(utterance());
         }
         w.small.push_back("嘿小小".into());
-        for q in ["一", "二", "三", "四", "五"] {
+        for q in ["一", "小小二", "小小三", "小小四", "小小五"] {
             w.turbo.push_back(q.into());
         }
     });

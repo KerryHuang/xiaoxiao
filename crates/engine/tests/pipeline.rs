@@ -50,6 +50,8 @@ struct World {
     default_changed: bool,
     seed: u32,
     start_resting: bool,
+    http: VecDeque<Result<String, String>>,
+    urls: Vec<String>,
 }
 
 type W = Arc<Mutex<World>>;
@@ -204,6 +206,11 @@ impl Platform for FakePlatform {
     }
     fn events_path(&self) -> PathBuf {
         self.dir.join("events.jsonl")
+    }
+    fn http_get(&self, url: &str) -> Result<String, String> {
+        let mut w = self.world.lock().unwrap();
+        w.urls.push(url.to_string());
+        w.http.pop_front().unwrap_or_else(|| Err("沒網路".into()))
     }
     fn now(&self) -> DateTime<FixedOffset> {
         let mut w = self.world.lock().unwrap();
@@ -462,6 +469,66 @@ fn offtopic_while_confirming_is_answered_as_a_new_question() {
     r.wait("偏題改當新問題回答", |w, _| w.said.len() == 3);
     assert_eq!(r.said()[2], "一公斤是1000 公克。");
     assert!(!r.dir.path().join("reminders.json").exists(), "偏題不能把提醒設下去");
+}
+
+const WEATHER: &str = r#"{"current":{"temperature_2m":22.4},"daily":{"weather_code":[3,51,3],
+    "temperature_2m_max":[26.3,25.1,20.0],"temperature_2m_min":[21.9,22.0,18.0],"precipitation_probability_max":[4,29,10]}}"#;
+
+fn ask_weather(mode: &str, location: &str, question: &str, http: Option<&str>) -> Rig {
+    let (location, question, http) = (location.to_string(), question.to_string(), http.map(String::from));
+    rig_full(tempfile::tempdir().unwrap(), mode, timing(), move |s| s.location = location, move |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back(question);
+        if let Some(h) = http {
+            w.http.push_back(Ok(h));
+        }
+    })
+}
+
+#[test]
+fn weather_in_taiwan_never_reaches_claude() {
+    let r = ask_weather("record", "台北", "明天天氣如何", Some(WEATHER));
+    r.wait("唸出天氣", |w, _| w.said.len() == 2);
+    assert_eq!(r.said()[1], "台北明天毛毛雨，最高 25、最低 22 度，降雨機率百分之二十九。");
+    assert!(r.w.lock().unwrap().urls[0].contains("latitude=25."));
+    assert!(!r.dir.path().join("claude-args.txt").exists(), "不該花 token");
+}
+
+#[test]
+fn weather_place_in_question_beats_setting() {
+    let r = ask_weather("record", "台北", "高雄明天天氣如何", Some(WEATHER));
+    r.wait("唸出天氣", |w, _| w.said.len() == 2);
+    assert!(r.said()[1].starts_with("高雄明天"), "{:?}", r.said());
+    assert!(r.w.lock().unwrap().urls[0].contains("latitude=22."));
+}
+
+/// 這幾種都要交給 Claude，不能編答案，也不能不回應。
+fn falls_back_to_claude(location: &str, question: &str, http: Option<&str>, calls_api: bool) {
+    let r = ask_weather("lookup-sources", location, question, http);
+    r.wait("Claude 查完回答", |w, _| w.said.len() >= 3);
+    assert_eq!(r.said()[1], "我查一下", "{:?}", r.said());
+    assert_eq!(!r.w.lock().unwrap().urls.is_empty(), calls_api);
+}
+
+#[test]
+fn weather_without_location_goes_to_claude() {
+    falls_back_to_claude("", "今天天氣如何", None, false);
+}
+
+#[test]
+fn weather_abroad_goes_to_claude() {
+    falls_back_to_claude("台北", "東京天氣如何", None, false);
+}
+
+#[test]
+fn weather_api_down_goes_to_claude() {
+    falls_back_to_claude("台北", "今天天氣如何", None, true);
+}
+
+#[test]
+fn weather_api_garbage_goes_to_claude() {
+    falls_back_to_claude("台北", "今天天氣如何", Some("{}"), true);
 }
 
 #[test]

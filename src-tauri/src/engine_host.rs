@@ -1,5 +1,6 @@
 //! 把引擎跑在背景執行緒，並提供給 UI 的 commands。
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -101,6 +102,11 @@ impl Platform for OsPlatform {
     }
     fn now(&self) -> DateTime<FixedOffset> {
         chrono::Local::now().fixed_offset()
+    }
+    fn http_get(&self, url: &str) -> Result<String, String> {
+        let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(5))).build().into();
+        let mut resp = agent.get(url).call().map_err(|e| e.to_string())?;
+        resp.body_mut().read_to_string().map_err(|e| e.to_string())
     }
 }
 

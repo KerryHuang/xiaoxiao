@@ -9,6 +9,7 @@ pub mod action;
 pub mod audio;
 pub mod platform;
 pub mod wake;
+pub mod weather;
 pub mod claude;
 pub mod config;
 pub mod events;

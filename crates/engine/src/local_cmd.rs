@@ -27,7 +27,7 @@ static TIMER_B: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(r"^(幫我)?(設|设)(一個|一个)?{NUM}(個|个)?(秒(鐘|钟)?|分(鐘|钟)?|小(時|时))(的)?(計|计)(時|时)(器)?$")).unwrap()
 });
 
-fn strip(text: &str) -> String {
+pub(crate) fn strip(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_whitespace() && !"，,。.！!？?、~～".contains(*c))
         .collect()

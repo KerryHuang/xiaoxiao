@@ -19,6 +19,7 @@ use crate::prompts::{confirm_prompt, quick_message, quick_prompt};
 use crate::router::{Route, route_prefix};
 use crate::sentence::{SentenceSplitter, is_junk_transcript};
 use crate::wake::{strip_call_name, verify_text};
+use crate::weather::{find_city, forecast_url, parse_weather, say_weather};
 
 pub const DEGRADED_MSG: &str = "現在連不上 Claude，我只能報時和計時";
 /// 命中後再收幾塊（0.4 秒）才複核。
@@ -96,6 +97,8 @@ pub trait Platform: Send {
     fn reminders_path(&self) -> PathBuf;
     fn events_path(&self) -> PathBuf;
     fn now(&self) -> DateTime<FixedOffset>;
+    /// 短逾時的 HTTP GET，回傳內文。目前只有查天氣用。
+    fn http_get(&self, url: &str) -> Result<String, String>;
 }
 
 type StateCb = Box<dyn Fn(State) + Send>;
@@ -574,6 +577,9 @@ impl<P: Platform> Engine<P> {
             self.local(cmd);
             return;
         }
+        if self.weather(text) {
+            return;
+        }
         if let Some(at) = self.degraded_at {
             if at.elapsed() < self.timing.claude_retry {
                 self.speak(DEGRADED_MSG);
@@ -582,6 +588,20 @@ impl<P: Platform> Engine<P> {
             }
         }
         self.quick_answer(text);
+    }
+
+    /// 台灣縣市的天氣問句直接查，不花 token。回 `false` 代表這句要交給 Claude。
+    fn weather(&mut self, text: &str) -> bool {
+        let Some(ask) = parse_weather(text) else { return false };
+        let place = ask.place.unwrap_or_else(|| self.settings.location.clone());
+        let Some(city) = find_city(&place) else { return false };
+        let t0 = Instant::now();
+        let r = self.p.http_get(&forecast_url(city)).and_then(|j| say_weather(city, ask.day, &j));
+        self.log.log("route", json!({"route": "weather", "ok": r.is_ok(), "latency_ms": t0.elapsed().as_millis() as u64}));
+        let Ok(answer) = r else { return false };
+        self.speak(&answer);
+        self.open_window(State::FollowUp);
+        true
     }
 
     fn local(&mut self, cmd: LocalCmd) {
@@ -845,7 +865,7 @@ fn set_state_raw(shared: &Shared, log: &EventLog, s: State) {
 // ---------- 唸出來的中文 ----------
 
 /// 0～99 轉中文數字；更大的用阿拉伯數字。
-fn cn(n: u32) -> String {
+pub(crate) fn cn(n: u32) -> String {
     const D: [&str; 10] = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
     match n {
         0..=9 => D[n as usize].into(),

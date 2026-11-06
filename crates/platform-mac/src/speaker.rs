@@ -25,7 +25,7 @@ impl Speaker for MacSpeaker {
 
     fn wake_sound(&self) {
         let _ = Command::new("afplay")
-            .arg("/System/Library/Sounds/Glass.aiff")
+            .arg("/System/Library/Sounds/Tink.aiff")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();

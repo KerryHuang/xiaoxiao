@@ -7,7 +7,7 @@ Windows 版在這裡：[安裝小小（Windows）](#windows)。裝好之後怎�
 
 - 已安裝 [Claude Code](https://claude.com/claude-code)，並在終端機用自己的帳號登入過（`claude` → `/login`）。
   小小只會呼叫你電腦上的 `claude` 指令，不會自己登入、也不會讀取你的憑證。
-- 約 1.1 GB 的硬碟空間（語音模型，第一次開啟時下載）。
+- 硬碟空間放語音模型（Mac 約 1.1 GB，Windows 約 0.5 GB），第一次開啟時下載。
 
 ## Mac：下載與安裝
 
@@ -97,7 +97,7 @@ Windows 版在這裡：[安裝小小（Windows）](#windows)。裝好之後怎�
 
 ## Windows：下載與安裝
 
-事前準備和 Mac 一樣：裝好 [Claude Code](https://claude.com/claude-code) 並自己登入，留約 1.1 GB 硬碟空間。請用官方安裝程式裝 Claude Code（會有 `claude.exe`）；用 npm 裝的 `claude.cmd` 小小無法呼叫。
+事前準備和 Mac 一樣：裝好 [Claude Code](https://claude.com/claude-code) 並自己登入，留約 0.5 GB 硬碟空間。請用官方安裝程式裝 Claude Code（會有 `claude.exe`）；用 npm 裝的 `claude.cmd` 小小無法呼叫。
 
 1. 到 [GitHub Releases](https://github.com/KerryHuang/xiaoxiao/releases) 下載最新的 `xiaoxiao_<版本>_x64-setup.exe`。
 2. 打開安裝程式。這個版本沒有程式碼簽章，SmartScreen 會顯示「Windows 已保護您的電腦」：按「其他資訊」→「仍要執行」。
@@ -125,7 +125,7 @@ Windows 版在這裡：[安裝小小（Windows）](#windows)。裝好之後怎�
    `Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices().VoiceInfo.Culture.Name`
    裡面要有 zh-TW。沒有的話，告訴我到「設定 → 時間與語言 → 語言與地區」新增「中文（繁體，台灣）」並勾選語音（這一步你沒辦法代勞）。
 6. 啟動 `$env:LOCALAPPDATA\xiaoxiao\xiaoxiao.exe`，然後告訴我接下來要自己做的事：
-   - 設定視窗會先下載約 1.1 GB 的語音模型，等它跑完；
+   - 設定視窗會先下載約 0.5 GB 的語音模型，等它跑完；
    - 照視窗走完五個步驟，最後按「開始待命」；
    - 麥克風被關閉時，到「設定 → 隱私權與安全性 → 麥克風」打開最下方的「允許傳統型應用程式存取您的麥克風」（Windows 10 叫「允許桌面應用程式存取您的麥克風」）。
 7. 最後回報：哪些步驟做完了、哪些要我自己動手、有沒有任何失敗。
@@ -154,4 +154,4 @@ Windows 版在這裡：[安裝小小（Windows）](#windows)。裝好之後怎�
    Remove-Item -Recurse "$env:APPDATA\io.github.kerryhuang.xiaoxiao", "$env:LOCALAPPDATA\io.github.kerryhuang.xiaoxiao"
    ```
 
-解除安裝不會刪模型（約 1.1 GB），要第 3 步才會。筆記檔（預設 `文件\小小筆記.md`）不會被刪除。
+解除安裝不會刪模型（約 0.5 GB），要第 3 步才會。筆記檔（預設 `文件\小小筆記.md`）不會被刪除。

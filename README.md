@@ -28,7 +28,7 @@
 
 - Mac（Apple 晶片、macOS 13 以上），或 Windows 10／11 x64（CPU 支援 AVX2）。
 - 已安裝並登入 [Claude Code](https://claude.com/claude-code)。小小只呼叫你自己登入的 `claude`，不會自己登入，也不會讀取憑證；問 Claude 會用到你的額度。
-- 約 1.1 GB 硬碟空間放語音模型，第一次開啟時下載。
+- 硬碟空間放語音模型（Mac 約 1.1 GB，Windows 約 0.5 GB），第一次開啟時下載。
 
 安裝檔沒有付費簽章，第一次開啟時系統會警告，[安裝說明](docs/install.md)有略過的步驟。
 

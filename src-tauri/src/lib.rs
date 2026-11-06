@@ -32,6 +32,10 @@ pub fn run() {
             app.manage(host.clone());
             app.manage(character::CharacterState::default());
             tray::build(app.handle())?;
+            // 視窗要等上面都準備好才建立：頁面一載入就會呼叫指令，太早會失敗而留下空白頁
+            for w in &app.config().app.windows {
+                tauri::WebviewWindowBuilder::from_config(app.handle(), w)?.build()?;
+            }
             host.restart();
             Ok(())
         })

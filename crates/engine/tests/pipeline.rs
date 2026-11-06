@@ -465,6 +465,20 @@ fn offtopic_while_confirming_is_answered_as_a_new_question() {
 }
 
 #[test]
+fn window_timeout_logs_how_loud_it_was() {
+    let r = rig("action", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("明天九點提醒我開會".into());
+    });
+    r.wait("複述", |w, s| w.said.len() == 2 && s == State::Confirming);
+    r.wait("窗口逾時", |_, s| s == State::Idle);
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    let line = log.lines().find(|l| l.contains("window_timeout")).expect("要有逾時紀錄");
+    assert!(line.contains("peak") && line.contains("floor") && line.contains("speech_blocks"), "{line}");
+}
+
+#[test]
 fn local_command_while_confirming_really_runs() {
     let r = rig("action", |w| {
         w.script.extend(wake_and_ask());

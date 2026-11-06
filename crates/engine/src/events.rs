@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 /// 允許寫進紀錄的欄位；其餘一律丟掉，避免內容外洩到檔案。
-const ALLOWED: &[&str] = &["latency_ms", "ok", "route", "error", "gain", "state"];
+const ALLOWED: &[&str] = &["latency_ms", "ok", "route", "error", "gain", "state", "peak", "floor", "speech_blocks"];
 
 /// 紀錄檔上限。抓不到麥克風時每 2 秒一筆，一天約 3.7 MB，不設限會一直長大。
 const MAX_BYTES: u64 = 5 * 1024 * 1024;

@@ -8,7 +8,7 @@ use chrono::{DateTime, Datelike, FixedOffset, Timelike};
 use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
-use crate::audio::{FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
+use crate::audio::{rms, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
 use crate::events::EventLog;
@@ -164,6 +164,8 @@ pub struct Engine<P: Platform> {
     ring: RingBuffer,
     ep: Option<Endpointer>,
     window_left: usize,
+    window_peak: f32,
+    window_speech: u32,
     quick: Option<Session>,
     confirm: Option<Session>,
     degraded_at: Option<Instant>,
@@ -207,6 +209,8 @@ impl<P: Platform> Engine<P> {
             ring: RingBuffer::new(VERIFY_SECS),
             ep: None,
             window_left: 0,
+            window_peak: 0.0,
+            window_speech: 0,
             quick: None,
             confirm: None,
             degraded_at: None,
@@ -427,6 +431,7 @@ impl<P: Platform> Engine<P> {
                 if self.ep.is_some() {
                     self.listen(&g);
                 } else if self.speech {
+                    self.window_speech += 1;
                     // 窗口內開口：不用喚醒詞，但要連續講 0.3 秒才算，避免一聲雜音就觸發
                     self.onset.push(g);
                     if self.onset.len() >= ONSET_BLOCKS {
@@ -437,9 +442,15 @@ impl<P: Platform> Engine<P> {
                         }
                     }
                 } else {
+                    self.window_peak = self.window_peak.max(rms(&g) / self.agc.gain());
                     self.onset.clear();
                     self.window_left = self.window_left.saturating_sub(1);
                     if self.window_left == 0 {
+                        // 只記音量，用來分辨「沒人說話」和「有說話但沒偵測到」
+                        self.log.log(
+                            "window_timeout",
+                            json!({"peak": self.window_peak, "floor": self.vad.floor(), "speech_blocks": self.window_speech}),
+                        );
                         self.to_idle();
                     }
                 }
@@ -503,6 +514,8 @@ impl<P: Platform> Engine<P> {
         self.ep = None;
         self.onset.clear();
         self.window_left = self.timing.followup_blocks;
+        self.window_peak = 0.0;
+        self.window_speech = 0;
         self.set_state(s);
     }
 

@@ -20,6 +20,8 @@ pub struct ModelFile {
     pub extract_to: Option<String>,
     #[serde(default)]
     pub dev_only: bool,
+    /// 只有這個平台要下載（`std::env::consts::OS` 的值）；沒寫就是都要。
+    pub platform: Option<String>,
 }
 
 /// 內建的模型清單（與 scripts/fetch-models.sh 共用）。
@@ -30,7 +32,7 @@ pub fn builtin() -> Manifest {
 /// 缺檔或雜湊不符就下載；`progress(已下載, 總大小)` 逐檔回報（總大小未知時為 0）。
 pub fn ensure(dir: &Path, manifest: &Manifest, progress: impl Fn(u64, u64)) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("建立模型資料夾失敗：{e}"))?;
-    for f in manifest.files.iter().filter(|f| !f.dev_only) {
+    for f in manifest.files.iter().filter(|f| !f.dev_only && f.platform.as_deref().is_none_or(|p| p == std::env::consts::OS)) {
         // 驗過的檔案留一個標記（雜湊＋大小），之後啟動不用再算 1.9 GB 的雜湊
         let marker = dir.join(format!(".{}.verified", f.name));
         match (&f.save_as, &f.extract_to) {
@@ -199,6 +201,7 @@ mod tests {
             save_as: save_as.map(Into::into),
             extract_to: extract_to.map(Into::into),
             dev_only: false,
+            platform: None,
         }
     }
 
@@ -267,5 +270,24 @@ mod tests {
         let mut f = file("lib", &t.path().join("missing"), "00".into(), Some("x"), None);
         f.dev_only = true;
         ensure(&t.path().join("models"), &Manifest { files: vec![f] }, |_, _| {}).unwrap();
+    }
+
+    #[test]
+    fn other_platform_entries_are_skipped() {
+        let t = tempfile::tempdir().unwrap();
+        let mut f = file("m", &t.path().join("missing"), "00".into(), Some("x"), None);
+        f.platform = Some("no-such-os".into());
+        ensure(&t.path().join("models"), &Manifest { files: vec![f] }, |_, _| {}).unwrap();
+    }
+
+    #[test]
+    fn this_platform_entries_are_downloaded() {
+        let t = tempfile::tempdir().unwrap();
+        let s = src(t.path(), "m.bin", b"model-bytes");
+        let out = t.path().join("models");
+        let mut f = file("m", &s, sha(b"model-bytes"), Some("m.bin"), None);
+        f.platform = Some(std::env::consts::OS.into());
+        ensure(&out, &Manifest { files: vec![f] }, |_, _| {}).unwrap();
+        assert!(out.join("m.bin").is_file());
     }
 }

@@ -37,7 +37,8 @@ pub struct OsPlatform {
     audio: OsAudio,
     spotter: kws::Spotter,
     small: asr::Whisper,
-    turbo: asr::Whisper,
+    /// 問題聽寫用的 turbo。Windows 只靠 CPU，turbo 一句要 20 秒以上，沒有這個就用 small。
+    turbo: Option<asr::Whisper>,
     mic: OsMicUsage,
     speaker: OsSpeaker,
     notifier: TauriNotifier,
@@ -53,7 +54,7 @@ impl OsPlatform {
             audio: os::new_audio(),
             spotter: kws::Spotter::new(&models.join(KWS_DIR))?,
             small: asr::Whisper::new(&models.join(SMALL))?,
-            turbo: asr::Whisper::new(&models.join(TURBO))?,
+            turbo: if cfg!(windows) { None } else { Some(asr::Whisper::new(&models.join(TURBO))?) },
             mic: OsMicUsage::new(),
             speaker: OsSpeaker,
             notifier: TauriNotifier(app.clone()),
@@ -75,7 +76,7 @@ impl Platform for OsPlatform {
         &self.small
     }
     fn transcriber(&self) -> &dyn Transcriber {
-        &self.turbo
+        self.turbo.as_ref().unwrap_or(&self.small)
     }
     fn mic_usage(&self) -> &dyn MicUsage {
         &self.mic
@@ -159,9 +160,11 @@ fn dev_models() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../models")
 }
 
-/// 三個模型都在（只看檔案存在；雜湊由 models::ensure 負責）。
+/// 這個平台要的模型都在（只看檔案存在；雜湊由 models::ensure 負責）。
 fn ready(dir: &Path) -> bool {
-    dir.join(KWS_DIR).join("tokens.txt").is_file() && dir.join(SMALL).is_file() && dir.join(TURBO).is_file()
+    dir.join(KWS_DIR).join("tokens.txt").is_file()
+        && dir.join(SMALL).is_file()
+        && (cfg!(windows) || dir.join(TURBO).is_file())
 }
 
 impl Paths {

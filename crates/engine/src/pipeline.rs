@@ -86,7 +86,7 @@ pub trait Platform: Send {
     fn spotter(&mut self) -> &mut dyn Spotter;
     /// 喚醒複核（whisper small）。
     fn verifier(&self) -> &dyn Transcriber;
-    /// 問題聽寫（whisper turbo）。
+    /// 問題聽寫（Mac 用 whisper turbo，Windows 用 small）。
     fn transcriber(&self) -> &dyn Transcriber;
     fn mic_usage(&self) -> &dyn MicUsage;
     fn screen(&self) -> &dyn ScreenState;

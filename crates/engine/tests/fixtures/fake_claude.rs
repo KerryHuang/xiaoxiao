@@ -84,6 +84,14 @@ fn main() {
                 });
             }
         }
+        // 真的收到問題才留紀錄；只有啟動不算
+        "asked" => {
+            let marker = out.expect("asked 模式要有輸出路徑");
+            each_line(|_| {
+                std::fs::write(&marker, "").unwrap();
+                result("一公斤是1000 公克。");
+            });
+        }
         // 第一次一啟動就死掉，之後正常回答：模擬預先開好的程序在等待時死掉
         "die-once" => {
             let marker = out.expect("die-once 模式要有輸出路徑");

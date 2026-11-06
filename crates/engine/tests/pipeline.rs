@@ -347,15 +347,26 @@ fn rejected_verify_stays_idle() {
 }
 
 #[test]
+fn claude_question_reaches_claude() {
+    let r = rig("asked", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+    });
+    let asked = r.dir.path().join("claude-args.txt");
+    r.wait("問題送到 claude", |_, _| asked.exists());
+}
+
+#[test]
 fn local_timer_no_claude() {
-    let r = rig("args", |w| {
+    let r = rig("asked", |w| {
         w.script.extend(wake_and_ask());
         w.small.push_back("嘿小小".into());
         w.turbo.push_back("計時十分鐘".into());
     });
     r.wait("回覆計時", |w, _| w.said.len() == 2);
     assert_eq!(r.said()[1], "好，十分鐘");
-    assert!(!r.dir.path().join("claude-args.txt").exists(), "不該呼叫 claude");
+    assert!(!r.dir.path().join("claude-args.txt").exists(), "不該把問題送給 claude");
 }
 
 #[test]

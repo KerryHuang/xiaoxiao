@@ -794,6 +794,17 @@ fn bluetooth_default_falls_back_or_nomic() {
 }
 
 #[test]
+fn nomic_retries_log_only_first_failure() {
+    let r = rig("ok", |w| {
+        w.open_results.extend(std::iter::repeat_with(|| Err(AudioError::NoUsableInput)).take(5));
+    });
+    r.wait("重試幾次後接回麥克風", |w, s| s == State::Idle && w.opens >= 6);
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    let failures = log.lines().filter(|l| l.contains(r#""ev":"audio""#) && l.contains(r#""ok":false"#)).count();
+    assert_eq!(failures, 1, "{log}");
+}
+
+#[test]
 fn rest_closes_mic_and_trigger_wakes() {
     let r = rig("ok", |_| {});
     r.wait("待命", |w, s| s == State::Idle && w.opens >= 1);

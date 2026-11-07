@@ -320,7 +320,10 @@ impl<P: Platform> Engine<P> {
                 self.to_idle();
             }
             Err(e) => {
-                self.log.log("audio", json!({"ok": false, "error": format!("{e:?}")}));
+                // 每 2 秒重試一次，全記會把舊紀錄洗掉
+                if self.state() != State::NoMic {
+                    self.log.log("audio", json!({"ok": false, "error": format!("{e:?}")}));
+                }
                 self.set_state(State::NoMic);
             }
         }

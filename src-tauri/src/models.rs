@@ -2,6 +2,8 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::mpsc::{RecvTimeoutError, sync_channel};
+use std::time::Duration;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -147,30 +149,58 @@ fn fetch_verified(f: &ModelFile, part: &Path, progress: &impl Fn(u64, u64)) -> R
 }
 
 /// 下載並邊寫邊算雜湊；支援 https:// 與 file://。
+/// 下載時連續這麼久沒收到資料就放棄。網路斷了不一定會報錯，不設限會永遠卡住。
+const STALL: Duration = Duration::from_secs(60);
+
+/// 讀到結束，每塊交給 `sink`；超過 `stall` 沒有新資料就回錯誤。
+/// 卡住的讀取無法中斷，只能丟下那條執行緒，它會在程式結束時消失。
+fn pump(mut reader: Box<dyn Read + Send>, stall: Duration, mut sink: impl FnMut(&[u8]) -> Result<(), String>) -> Result<(), String> {
+    let (tx, rx) = sync_channel(4);
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 1 << 16];
+        loop {
+            let chunk = match reader.read(&mut buf) {
+                Ok(0) => return,
+                Ok(n) => Ok(buf[..n].to_vec()),
+                Err(e) => Err(e),
+            };
+            let failed = chunk.is_err();
+            if tx.send(chunk).is_err() || failed {
+                return;
+            }
+        }
+    });
+    loop {
+        match rx.recv_timeout(stall) {
+            Ok(Ok(b)) => sink(&b)?,
+            Ok(Err(e)) => return Err(format!("下載中斷：{e}")),
+            Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            Err(RecvTimeoutError::Timeout) => return Err(format!("下載卡住了，{} 秒沒有收到資料，請檢查網路後再試一次", stall.as_secs())),
+        }
+    }
+}
+
 fn download(url: &str, part: &Path, progress: &impl Fn(u64, u64)) -> Result<String, String> {
-    let (mut reader, total): (Box<dyn Read>, u64) = if let Some(p) = url.strip_prefix("file://") {
+    let (reader, total): (Box<dyn Read + Send>, u64) = if let Some(p) = url.strip_prefix("file://") {
         let f = fs::File::open(p).map_err(|e| format!("讀不到 {p}：{e}"))?;
         let n = f.metadata().map(|m| m.len()).unwrap_or(0);
         (Box::new(f), n)
     } else {
-        let resp = ureq::get(url).call().map_err(|e| format!("下載失敗：{e}"))?;
+        let agent: ureq::Agent = ureq::Agent::config_builder().timeout_connect(Some(STALL)).timeout_recv_response(Some(STALL)).build().into();
+        let resp = agent.get(url).call().map_err(|e| format!("下載失敗：{e}"))?;
         let n = resp.body().content_length().unwrap_or(0);
         (Box::new(resp.into_body().into_reader()), n)
     };
     let mut out = fs::File::create(part).map_err(|e| e.to_string())?;
     let mut h = Sha256::new();
-    let mut buf = vec![0u8; 1 << 16];
     let mut done = 0u64;
-    loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("下載中斷：{e}"))?;
-        if n == 0 {
-            break;
-        }
-        out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-        h.update(&buf[..n]);
-        done += n as u64;
+    pump(reader, STALL, |b| {
+        out.write_all(b).map_err(|e| e.to_string())?;
+        h.update(b);
+        done += b.len() as u64;
         progress(done, total);
-    }
+        Ok(())
+    })?;
     out.sync_all().map_err(|e| e.to_string())?;
     Ok(hex(&h.finalize()))
 }
@@ -178,6 +208,43 @@ fn download(url: &str, part: &Path, progress: &impl Fn(u64, u64)) -> Result<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 給完資料就卡住，跟網路斷了卻沒有錯誤一樣。
+    struct Stuck(Option<Vec<u8>>);
+    impl Read for Stuck {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if let Some(d) = self.0.take() {
+                buf[..d.len()].copy_from_slice(&d);
+                return Ok(d.len());
+            }
+            std::thread::sleep(Duration::from_secs(3600));
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn stalled_download_fails_instead_of_hanging() {
+        let mut got = vec![];
+        let t0 = std::time::Instant::now();
+        let r = pump(Box::new(Stuck(Some(vec![1, 2, 3]))), Duration::from_millis(50), |b| {
+            got.extend_from_slice(b);
+            Ok(())
+        });
+        assert!(r.unwrap_err().contains("卡住"));
+        assert_eq!(got, [1, 2, 3]);
+        assert!(t0.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn pump_reads_to_the_end() {
+        let mut got = vec![];
+        pump(Box::new(&b"abc"[..]), Duration::from_secs(5), |b| {
+            got.extend_from_slice(b);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(got, b"abc");
+    }
     use sha2::{Digest, Sha256};
     use std::cell::Cell;
     use std::fs;

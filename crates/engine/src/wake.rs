@@ -20,7 +20,12 @@ pub fn strip_call_name(text: &str) -> Option<&str> {
     if rest.starts_with('的') {
         return None;
     }
-    Some(rest.trim_start_matches(skip).trim_end())
+    let rest = rest.trim_start_matches(skip).trim_end();
+    // 只叫名字常被聽成「小小小」
+    if rest.chars().all(|c| c == '小' || skip(c)) {
+        return Some("");
+    }
+    Some(rest)
 }
 
 #[cfg(test)]
@@ -37,6 +42,7 @@ mod tests {
             ("嘿，小小，明天呢", "明天呢"),
             ("Hey 小小 明天呢", "明天呢"),
             ("小小。", ""),
+            ("小小小。", ""),
             // 語音辨識常把開頭的「嘿」聽錯（實機紀錄）
             ("配小小,一公斤等於幾克", "一公斤等於幾克"),
             ("可以小小。", ""),

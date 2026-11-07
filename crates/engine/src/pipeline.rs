@@ -164,8 +164,10 @@ pub struct Engine<P: Platform> {
     speech: bool,
     onset: Vec<Vec<f32>>,
     followups: u32,
+    name_hinted: bool,
     ring: RingBuffer,
     ep: Option<Endpointer>,
+    onset_gap: bool,
     window_left: usize,
     window_peak: f32,
     window_speech: u32,
@@ -209,8 +211,10 @@ impl<P: Platform> Engine<P> {
             speech: false,
             onset: vec![],
             followups: 0,
+            name_hinted: false,
             ring: RingBuffer::new(VERIFY_SECS),
             ep: None,
+            onset_gap: false,
             window_left: 0,
             window_peak: 0.0,
             window_speech: 0,
@@ -396,6 +400,7 @@ impl<P: Platform> Engine<P> {
         }
         if matches!(self.state(), State::Idle | State::Degraded) {
             self.followups = 0;
+            self.name_hinted = false;
             self.warm_quick();
             self.play_wake_sound();
             self.ep = Some(Endpointer::new());
@@ -437,16 +442,22 @@ impl<P: Platform> Engine<P> {
                     self.window_speech += 1;
                     // 窗口內開口：不用喚醒詞，但要連續講 0.3 秒才算，避免一聲雜音就觸發
                     self.onset.push(g);
-                    if self.onset.len() >= ONSET_BLOCKS {
+                    if self.onset.len() >= ONSET_BLOCKS + usize::from(self.onset_gap) {
+                        self.onset_gap = false;
                         self.log.log("followup", json!({"gain": self.agc.gain()}));
                         self.ep = Some(Endpointer::new());
                         for b in std::mem::take(&mut self.onset) {
                             self.listen(&b);
                         }
                     }
+                } else if !self.onset.is_empty() && !self.onset_gap {
+                    // 字與字之間的小空隙不算講完
+                    self.onset_gap = true;
+                    self.onset.push(g);
                 } else {
                     self.window_peak = self.window_peak.max(rms(&g) / self.agc.gain());
                     self.onset.clear();
+                    self.onset_gap = false;
                     self.window_left = self.window_left.saturating_sub(1);
                     if self.window_left == 0 {
                         // 只記音量，用來分辨「沒人說話」和「有說話但沒偵測到」
@@ -485,6 +496,7 @@ impl<P: Platform> Engine<P> {
     /// 「叮」＋「我在」→ 開始聽問題。
     fn ack(&mut self) {
         self.followups = 0;
+        self.name_hinted = false;
         self.warm_quick();
         self.set_state(State::Acking);
         self.p.speaker().chime();
@@ -516,6 +528,7 @@ impl<P: Platform> Engine<P> {
         }
         self.ep = None;
         self.onset.clear();
+        self.onset_gap = false;
         self.window_left = self.timing.followup_blocks;
         self.window_peak = 0.0;
         self.window_speech = 0;
@@ -553,7 +566,11 @@ impl<P: Platform> Engine<P> {
         } else if followup {
             self.followup_turn(&text);
         } else {
-            self.question(&text);
+            match strip_call_name(&text) {
+                Some("") => self.ack(),
+                Some(q) => self.question(q),
+                None => self.question(&text),
+            }
         }
     }
 
@@ -562,6 +579,10 @@ impl<P: Platform> Engine<P> {
         match strip_call_name(text) {
             None => {
                 self.log.log("followup_ignored", json!({}));
+                if !self.name_hinted {
+                    self.name_hinted = true;
+                    self.speak("要先叫我小小");
+                }
                 self.open_window(State::FollowUp);
             }
             Some("") => self.ack(),

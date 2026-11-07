@@ -532,6 +532,69 @@ fn weather_api_garbage_goes_to_claude() {
 }
 
 #[test]
+fn followup_with_a_gap_between_syllables_still_counts() {
+    let r = rig("ok", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+        w.turbo.push_back("小小，那兩公斤呢".into());
+    });
+    r.wait("第一題答完", |w, s| w.said.len() == 2 && s == State::FollowUp);
+    let mut v = n(Kind::Speech, 2);
+    v.extend(n(Kind::Silence, 1));
+    v.extend(n(Kind::Speech, 2));
+    v.extend(n(Kind::Silence, 10));
+    r.push(v);
+    r.wait("第二題也答了", |w, _| w.said.len() >= 3);
+}
+
+#[test]
+fn followup_without_name_gets_one_hint() {
+    let r = rig("record", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("現在幾點".into());
+        w.turbo.push_back("一公斤幾公克".into());
+        w.turbo.push_back("一公斤幾公克".into());
+    });
+    r.wait("第一題答完", |w, s| w.said.len() == 2 && s == State::FollowUp);
+    r.push(utterance());
+    r.wait("提醒要叫名字", |w, _| w.said.len() == 3);
+    assert_eq!(r.said()[2], "要先叫我小小");
+    r.wait("回到等追問", |_, s| s == State::FollowUp);
+    r.push(utterance());
+    r.wait("第二次不再提醒", |w, s| w.turbo.is_empty() && s == State::FollowUp);
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(r.said().len(), 3, "{:?}", r.said());
+    assert!(!r.dir.path().join("claude-args.txt").exists(), "不該送給 Claude");
+}
+
+#[test]
+fn name_said_after_the_hotkey_is_not_a_question() {
+    let r = rig("record", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("嘿小小".into());
+        w.turbo.push_back("現在幾點".into());
+    });
+    r.wait("再回一次我在", |w, s| w.said == ["我在", "我在"] && s == State::Listening);
+    assert!(!r.dir.path().join("claude-args.txt").exists(), "只叫名字不該花 token");
+    r.push(utterance());
+    r.wait("接著回答", |w, _| w.said.len() == 3);
+}
+
+#[test]
+fn name_before_a_question_is_removed() {
+    let r = rig("record", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("小小，現在幾點".into());
+    });
+    r.wait("當成本機指令回答", |w, _| w.said.len() == 2);
+    assert!(!r.dir.path().join("claude-args.txt").exists(), "不該送給 Claude");
+}
+
+#[test]
 fn window_timeout_logs_how_loud_it_was() {
     let r = rig("action", |w| {
         w.script.extend(wake_and_ask());
@@ -919,11 +982,12 @@ fn followup_without_name_never_reaches_claude() {
     });
     let msgs = r.dir.path().join("claude-args.txt");
     r.wait("雜音之後叫名字還能問", |_, _| fs::read_to_string(&msgs).is_ok_and(|s| s.lines().count() == 2));
-    r.wait("唸完第二個回答", |w, _| w.said.len() >= 3);
+    r.wait("唸完第二個回答", |w, _| w.said.len() >= 4);
     let text = fs::read_to_string(&msgs).unwrap();
     assert!(!text.contains("volks2"), "沒叫名字不能送 claude：{text}");
     assert!(text.contains("那兩公斤呢") && !text.contains("小小"), "送出前要去掉名字：{text}");
-    assert_eq!(r.said().len(), 3, "沒叫名字不回應：{:?}", r.said());
+    assert_eq!(r.said()[2], "要先叫我小小", "沒叫名字只提醒：{:?}", r.said());
+    assert_eq!(r.said().len(), 4, "{:?}", r.said());
 }
 
 #[test]

@@ -10,7 +10,7 @@ const AGC_WINDOW: usize = 50;
 const AGC_TARGET: f32 = 0.3;
 const AGC_MAX: f32 = 30.0;
 /// 增益後 RMS 超過這個值算有人講話。
-pub const SPEECH_RMS: f32 = 0.04;
+pub const SPEECH_RMS: f32 = 0.02;
 const PAUSE_BLOCKS: usize = 8;
 const MAX_BLOCKS: usize = 100;
 const NO_SPEECH_BLOCKS: usize = 60;
@@ -188,6 +188,16 @@ mod tests {
 
     fn sine(amp: f32, n: usize) -> Vec<f32> {
         (0..n).map(|i| amp * (i as f32 * 2.0 * std::f32::consts::PI * 440.0 / SR as f32).sin()).collect()
+    }
+
+    /// 實機：重音把增益壓到 1 左右後，後面的字只剩 0.03，比雜訊底高很多卻被當成沒講話。
+    #[test]
+    fn speech_after_gain_drop_still_counts() {
+        let mut d = SpeechDetector::default();
+        for _ in 0..FLOOR_WARMUP {
+            d.push(&sine(0.0015, BLOCK), 1.0);
+        }
+        assert!(d.push(&sine(0.04, BLOCK), 1.0), "RMS 0.028，是雜訊底的 25 倍");
     }
 
     #[test]

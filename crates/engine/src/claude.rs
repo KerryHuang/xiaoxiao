@@ -65,7 +65,7 @@ impl fmt::Display for ClaudeError {
             ClaudeError::NotFound => "找不到 Claude，請先安裝 Claude Code 或 Claude Desktop。",
             ClaudeError::NotLoggedIn => "Claude 還沒登入，請在終端機執行 claude 並登入。",
             ClaudeError::Crashed => "回答中斷了。",
-            ClaudeError::Timeout => "查太久了，先停下來。",
+            ClaudeError::Timeout => "我連不上或查太久了，請檢查網路後再問一次。",
             ClaudeError::Garbage => "Claude 的回應看不懂。",
         })
     }

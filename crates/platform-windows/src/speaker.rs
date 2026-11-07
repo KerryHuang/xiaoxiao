@@ -46,7 +46,7 @@ impl Speaker for WinSpeaker {
 
     fn wake_sound(&self) {
         let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-        let file = HSTRING::from(format!(r"{root}\Media\Windows Notify Messaging.wav"));
+        let file = HSTRING::from(format!(r"{root}\Media\ding.wav"));
         let _ = unsafe { PlaySoundW(&file, None, SND_FILENAME | SND_SYNC | SND_NODEFAULT) };
     }
 }

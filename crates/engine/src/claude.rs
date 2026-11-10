@@ -96,9 +96,13 @@ pub fn is_network_path(dir: &str) -> bool {
 }
 
 /// Windows 上不要替 claude 開主控台視窗（否則每次回答都會跳出黑視窗）。
+/// CREATE_NO_WINDOW｜BELOW_NORMAL_PRIORITY_CLASS。
+/// claude 在 Windows 啟動要約 5 秒、很吃 CPU，剛好碰上使用者開口後的聽寫，聽寫會慢一倍以上。
+pub const WIN_SPAWN_FLAGS: u32 = 0x0800_0000 | 0x0000_4000;
+
 pub fn quiet(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    cmd.creation_flags(WIN_SPAWN_FLAGS);
     cmd
 }
 

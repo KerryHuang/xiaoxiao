@@ -33,4 +33,4 @@ pub use screen::WinScreen;
 #[cfg(windows)]
 pub use paths::short_path;
 #[cfg(windows)]
-pub use speaker::{WinSpeaker, voice_ok};
+pub use speaker::{WinSpeaker, prepare_canned, voice_ok};

@@ -309,3 +309,10 @@ fn spoken_answer_keeps_ordinary_text_about_sources() {
 fn spoken_answer_of_only_sources_is_empty() {
     assert_eq!(spoken_answer("Sources:\n- https://example.com/a"), "");
 }
+
+#[test]
+fn windows_claude_runs_below_normal_priority() {
+    // 啟動時很吃 CPU，會跟聽寫搶核心
+    assert_eq!(WIN_SPAWN_FLAGS & 0x0000_4000, 0x0000_4000, "BELOW_NORMAL_PRIORITY_CLASS");
+    assert_eq!(WIN_SPAWN_FLAGS & 0x0800_0000, 0x0800_0000, "CREATE_NO_WINDOW");
+}

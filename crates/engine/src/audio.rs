@@ -107,6 +107,50 @@ pub fn rms(block: &[f32]) -> f32 {
     (block.iter().map(|x| x * x).sum::<f32>() / block.len() as f32).sqrt()
 }
 
+/// 剪掉 16-bit 單聲道 PCM wav 前後的靜音，前後各留 30 毫秒。
+/// Windows 語音唸短句時句尾會拖 0.7 秒空白，讓「我在」之後要多等才開始聽。
+/// 讀不懂的格式或整段靜音回傳 None。
+pub fn trim_wav_silence(wav: &[u8]) -> Option<Vec<u8>> {
+    let u16_at = |i: usize| wav.get(i..i + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let u32_at = |i: usize| wav.get(i..i + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    if wav.get(0..4)? != b"RIFF" || wav.get(8..12)? != b"WAVE" {
+        return None;
+    }
+    let (mut pos, mut rate, mut data) = (12, None, None);
+    while let (Some(id), Some(len)) = (wav.get(pos..pos + 4), u32_at(pos + 4)) {
+        let body = pos + 8;
+        match id {
+            b"fmt " if u16_at(body)? == 1 && u16_at(body + 2)? == 1 && u16_at(body + 14)? == 16 => rate = u32_at(body + 4),
+            b"fmt " => return None,
+            b"data" => data = Some(wav.get(body..(body + len as usize).min(wav.len()))?),
+            _ => {}
+        }
+        pos = body + len as usize + (len as usize & 1);
+    }
+    let (rate, data) = (rate?, data?);
+    let s: Vec<i16> = data.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b)).collect();
+    let peak = s.iter().map(|v| v.unsigned_abs()).max()?;
+    let th = peak / 20;
+    let first = s.iter().position(|v| v.unsigned_abs() > th)?;
+    let last = s.iter().rposition(|v| v.unsigned_abs() > th)?;
+    let m = rate as usize * 3 / 100;
+    let keep = &s[first.saturating_sub(m)..(last + m + 1).min(s.len())];
+    let n = keep.len() as u32 * 2;
+    let mut out = Vec::with_capacity(44 + n as usize);
+    out.extend(b"RIFF");
+    out.extend((36 + n).to_le_bytes());
+    out.extend(b"WAVEfmt ");
+    out.extend(16u32.to_le_bytes());
+    out.extend([1u8, 0, 1, 0]);
+    out.extend(rate.to_le_bytes());
+    out.extend((rate * 2).to_le_bytes());
+    out.extend([2u8, 0, 16, 0]);
+    out.extend(b"data");
+    out.extend(n.to_le_bytes());
+    keep.iter().for_each(|v| out.extend(v.to_le_bytes()));
+    Some(out)
+}
+
 #[derive(Debug)]
 pub enum EndpointEvent {
     Continue,
@@ -298,5 +342,47 @@ mod tests {
         assert_eq!(resample_to_16k(&vec![0.0; 48000], 48000).len(), 16000);
         assert_eq!(resample_to_16k(&vec![0.0; 44100], 44100).len(), 16000);
         assert_eq!(resample_to_16k(&vec![0.5; 1600], 16000), vec![0.5; 1600]);
+    }
+
+    fn wav16(rate: u32, samples: &[i16]) -> Vec<u8> {
+        let data = samples.len() as u32 * 2;
+        let mut w = Vec::new();
+        w.extend(b"RIFF");
+        w.extend((36 + data).to_le_bytes());
+        w.extend(b"WAVEfmt ");
+        w.extend(16u32.to_le_bytes());
+        w.extend([1u8, 0, 1, 0]);
+        w.extend(rate.to_le_bytes());
+        w.extend((rate * 2).to_le_bytes());
+        w.extend([2u8, 0, 16, 0]);
+        w.extend(b"data");
+        w.extend(data.to_le_bytes());
+        for s in samples {
+            w.extend(s.to_le_bytes());
+        }
+        w
+    }
+
+    fn data_len(w: &[u8]) -> u32 {
+        u32::from_le_bytes(w[40..44].try_into().unwrap())
+    }
+
+    #[test]
+    fn trims_silence_around_speech_keeping_a_short_margin() {
+        let r = 22050;
+        let mut s = vec![0i16; r / 10];
+        s.extend((0..r * 4 / 10).map(|i| if i % 2 == 0 { 8000 } else { -8000 }));
+        s.extend(vec![0i16; r * 7 / 10]);
+        let out = trim_wav_silence(&wav16(r as u32, &s)).unwrap();
+        let secs = data_len(&out) as f32 / 2.0 / r as f32;
+        assert!((0.45..0.48).contains(&secs), "{secs}");
+        assert_eq!(out.len() as u32, 44 + data_len(&out));
+        assert_eq!(u32::from_le_bytes(out[4..8].try_into().unwrap()), out.len() as u32 - 8);
+    }
+
+    #[test]
+    fn refuses_wav_it_cannot_read() {
+        assert!(trim_wav_silence(b"RIFF....WAVE").is_none());
+        assert!(trim_wav_silence(&wav16(22050, &[0; 100])).is_none(), "全是靜音");
     }
 }

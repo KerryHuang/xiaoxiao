@@ -51,6 +51,11 @@ pub struct OsPlatform {
 impl OsPlatform {
     fn load(app: &AppHandle, paths: &Paths, settings: &Settings) -> Result<OsPlatform, String> {
         let models = os::model_path(&paths.models())?;
+        #[cfg(windows)]
+        {
+            let dir = paths.data.clone();
+            std::thread::spawn(move || platform_windows::prepare_canned(dir));
+        }
         Ok(OsPlatform {
             audio: os::new_audio(),
             spotter: kws::Spotter::new(&models.join(KWS_DIR))?,

@@ -360,7 +360,8 @@ fn wake_starts_claude_before_the_question() {
         w.small.push_back("嘿小小".into());
     });
     let args = r.dir.path().join("claude-args.txt");
-    r.wait("喚醒後就先開好 claude", |_, _| args.exists());
+    // 先開 claude 再說「我在」，所以兩件事都發生了才檢查，不然慢的機器會在中間撞到空檔
+    r.wait("喚醒後就先開好 claude", |w, _| args.exists() && !w.said.is_empty());
     assert_eq!(r.said(), ["我在"]);
 }
 

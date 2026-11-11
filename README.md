@@ -78,3 +78,7 @@ bun tauri build
 ```
 
 Windows 打包還要先把 VC++ runtime 複製到 `src-tauri/win-runtime/`，完整步驟見 [`windows-build.yml`](.github/workflows/windows-build.yml)。
+
+## 授權
+
+[MIT](LICENSE)。內含的第三方元件與模型各有授權，見 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。

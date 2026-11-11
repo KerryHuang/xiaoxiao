@@ -19,7 +19,7 @@ static TIME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(現在|现在)?(�
 static DATE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(今天)?((幾|几)(號|号)|星期(幾|几)|禮拜(幾|几)|礼拜(幾|几))$").unwrap());
 static CANCEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(取消|停止)(計|计)(時|时)$").unwrap());
-static REST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(小小)?(你)?先休息(一下)?(吧)?$").unwrap());
+static REST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(小小)?(你)?(先|可以|可以去|去)?休息(一下)?(了|吧)?$").unwrap());
 static TIMER_A: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(r"^(計|计)(時|时){NUM}(個|个)?(秒(鐘|钟)?|分(鐘|钟)?|小(時|时))$")).unwrap()
 });
@@ -88,5 +88,15 @@ mod tests {
         assert_eq!(parse_local("小小先休息"), Some(Rest));
         assert_eq!(parse_local("提醒我三點開會"), None);
         assert_eq!(parse_local("台北現在幾點的天氣怎樣"), None);
+    }
+
+    #[test]
+    fn common_ways_to_say_rest() {
+        for s in ["小小你可以休息了", "小小，去休息吧", "你可以去休息了", "休息吧", "小小休息一下", "小小，先休息"] {
+            assert_eq!(parse_local(s), Some(LocalCmd::Rest), "{s}");
+        }
+        for s in ["我想休息一下", "休息時間幾點", "小小不要休息"] {
+            assert_eq!(parse_local(s), None, "{s}");
+        }
     }
 }

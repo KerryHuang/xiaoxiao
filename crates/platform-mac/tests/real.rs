@@ -11,8 +11,9 @@ use std::time::Duration;
 fn micusage_sees_other_process() {
     let m = MacMicUsage::new();
     assert!(!m.others_using_mic(), "測試前已有程序在用麥克風");
-    // cargo test 會一併編譯 examples：target/<profile>/deps/<test> → target/<profile>/examples/hold_mic
-    let exe = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("examples/hold_mic");
+    // 名稱跟 platform-windows 的 hold_mic 錯開：Windows 上同名範例會寫到同一個 exe，平行編譯時連結失敗。
+    // cargo test 會一併編譯 examples：target/<profile>/deps/<test> → target/<profile>/examples/mac_hold_mic
+    let exe = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("examples/mac_hold_mic");
     let mut c = Command::new(exe).arg("4").spawn().unwrap();
     std::thread::sleep(Duration::from_millis(1500));
     assert!(m.others_using_mic());

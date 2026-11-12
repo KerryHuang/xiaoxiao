@@ -33,6 +33,8 @@ const ONSET_BLOCKS: usize = 3;
 const MAX_FOLLOWUP_WINDOWS: u32 = 3;
 /// 顧問模式連續幾次判斷是旁人的話（SKIP）就結束。
 const MAX_SKIPS: u32 = 3;
+/// 顧問連續幾次回答失敗就結束討論。
+const MAX_ADVISE_FAILURES: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -165,6 +167,17 @@ struct Discussion {
     summary: Option<Summary>,
     /// 連續被判定為旁人的話的次數；正常回應就歸零。
     skips: u32,
+    /// 連續回答失敗的次數；成功就歸零。
+    failures: u32,
+}
+
+/// 顧問程序要重開（沒有前面的對話）時，在訊息前面補上到目前為止的討論。
+fn with_recap(d: &mut Discussion, msg: String) -> String {
+    if d.sess.needs_spawn() && !d.history.is_empty() {
+        format!("{}{msg}", d.history.recap())
+    } else {
+        msg
+    }
 }
 
 /// 顧問模式為什麼結束。
@@ -172,6 +185,8 @@ enum EndReason {
     Phrase,
     Silence,
     Skips,
+    Failures,
+    Pause,
 }
 
 impl EndReason {
@@ -180,6 +195,8 @@ impl EndReason {
             EndReason::Phrase => "phrase",
             EndReason::Silence => "silence",
             EndReason::Skips => "skips",
+            EndReason::Failures => "failures",
+            EndReason::Pause => "pause",
         }
     }
 }
@@ -404,7 +421,9 @@ impl<P: Platform> Engine<P> {
             }
             self.ep = None;
             self.confirm = None;
-            self.discussion = None;
+            if let Some(d) = self.discussion.take() {
+                self.log.log("advise_end", json!({"reason": EndReason::Pause.as_str(), "turns": d.history.len()}));
+            }
             self.quick = None; // 暫停期間不留著 claude 佔記憶體，下次叫醒會重開
             self.set_state(State::Paused);
         } else if !want && matches!(s, State::Paused | State::NoMic) {
@@ -719,7 +738,7 @@ impl<P: Platform> Engine<P> {
             let _rt = self.rt.enter();
             let _ = sess.warm();
         }
-        self.discussion = Some(Discussion { sess, history: Transcript::default(), summary: None, skips: 0 });
+        self.discussion = Some(Discussion { sess, history: Transcript::default(), summary: None, skips: 0, failures: 0 });
         if rest.is_empty() {
             self.speak("好，你說");
             self.open_window(State::Advising);
@@ -752,7 +771,8 @@ impl<P: Platform> Engine<P> {
                     let _ = speaker.say(&s);
                 }
             };
-            self.rt.block_on(d.sess.ask(&quick_message(now, text), |delta| {
+            let msg = with_recap(&mut d, quick_message(now, text));
+            self.rt.block_on(d.sess.ask(&msg, |delta| {
                 // 還判斷不出是不是 SKIP 之前先累積不唸
                 if skip.is_none() {
                     buf.push_str(delta);
@@ -795,6 +815,7 @@ impl<P: Platform> Engine<P> {
                 } else {
                     d.skips += 1;
                 }
+                d.failures = 0;
                 self.log.log("advise_turn", json!({"latency_ms": t0.elapsed().as_millis() as u64, "skip": skipped}));
                 self.discussion = Some(d);
             }
@@ -803,8 +824,12 @@ impl<P: Platform> Engine<P> {
                     self.after_speaking();
                 }
                 self.log.log("claude", json!({"ok": false, "error": format!("{e:?}")}));
+                d.failures += 1;
                 self.discussion = Some(d);
                 self.speak(&e.to_string());
+                if self.discussion.as_ref().is_some_and(|d| d.failures >= MAX_ADVISE_FAILURES) {
+                    return self.end_advising(EndReason::Failures);
+                }
             }
         }
         if skipped && self.discussion.as_ref().is_some_and(|d| d.skips >= MAX_SKIPS) {
@@ -824,7 +849,8 @@ impl<P: Platform> Engine<P> {
             return self.to_idle();
         }
         self.set_state(State::Thinking);
-        let r = self.rt.block_on(d.sess.ask(summary_request(), |_| {}));
+        let msg = with_recap(&mut d, summary_request().to_string());
+        let r = self.rt.block_on(d.sess.ask(&msg, |_| {}));
         match r.ok().and_then(|full| parse_summary(&full)) {
             None => {
                 self.speak("存不了，先這樣");

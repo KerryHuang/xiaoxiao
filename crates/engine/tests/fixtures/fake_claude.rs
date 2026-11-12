@@ -180,6 +180,43 @@ fn main() {
                 });
             }
         }
+        // 顧問程序壞掉的情境。crash：第 2 行後死一次；flaky：死一次後每行都死；dead：每行都死
+        "advise-crash" | "advise-flaky" | "advise-dead" => {
+            if args.iter().any(|a| a.contains("陪使用者討論工作")) {
+                let path = out.expect("advise 模式要有輸出路徑");
+                let spawns = path.with_extension("spawns");
+                let marker = path.with_extension("crashed");
+                let old = std::fs::read_to_string(&spawns).unwrap_or_default();
+                std::fs::write(&spawns, format!("{old}spawn\n")).unwrap();
+                let first_run = !marker.exists();
+                for (i, line) in std::io::stdin().lock().lines().map_while(Result::ok).enumerate() {
+                    let old = std::fs::read_to_string(&path).unwrap_or_default();
+                    std::fs::write(&path, format!("{old}{line}\n")).unwrap();
+                    let die = match mode.as_str() {
+                        "advise-dead" => true,
+                        "advise-flaky" if !first_run => true,
+                        _ => first_run && i == 1,
+                    };
+                    if die {
+                        std::fs::write(&marker, "").unwrap();
+                        std::process::exit(1);
+                    }
+                    if line.contains("[整理重點]") {
+                        result("<<SAY>>我們談了新功能排程。\\n<<TOPIC>>新功能排程\\n<<NOTES>>\\n- 先做登入\\n- 再做匯出");
+                    } else {
+                        delta("**這個想法不錯**，");
+                        delta("你覺得先做哪個？");
+                        result("**這個想法不錯**，你覺得先做哪個？");
+                    }
+                }
+            } else {
+                each_line(|_| {
+                    delta("一公斤是");
+                    delta("1000 公克。");
+                    result("一公斤是1000 公克。");
+                });
+            }
+        }
         // 第一次一啟動就死掉，之後正常回答：模擬預先開好的程序在等待時死掉
         "die-once" => {
             let marker = out.expect("die-once 模式要有輸出路徑");

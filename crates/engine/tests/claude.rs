@@ -316,3 +316,14 @@ fn windows_claude_runs_below_normal_priority() {
     assert_eq!(WIN_SPAWN_FLAGS & 0x0000_4000, 0x0000_4000, "BELOW_NORMAL_PRIORITY_CLASS");
     assert_eq!(WIN_SPAWN_FLAGS & 0x0800_0000, 0x0800_0000, "CREATE_NO_WINDOW");
 }
+
+#[tokio::test]
+async fn needs_spawn_tracks_the_process() {
+    let t = tempfile::tempdir().unwrap();
+    let mut s = Session::new(fake(t.path(), "crash"), "sonnet", "SP");
+    assert!(s.needs_spawn());
+    s.warm().unwrap();
+    assert!(!s.needs_spawn());
+    assert!(s.ask("q", |_| {}).await.is_err());
+    assert!(s.needs_spawn(), "失敗會丟掉程序，下一問要補前情");
+}

@@ -271,6 +271,12 @@ impl Session {
         Ok(())
     }
 
+    /// 下一次 `ask` 會不會開新程序（沒有前面的對話）：ask 失敗、等待時死掉、閒置過久都算。
+    pub fn needs_spawn(&mut self) -> bool {
+        self.drop_stale();
+        self.proc.is_none()
+    }
+
     /// 閒置太久的換掉開新對話，避免上下文越積越多；等待時死掉的也不留。
     fn drop_stale(&mut self) {
         let dead = self.proc.as_mut().is_some_and(|p| !matches!(p.child.try_wait(), Ok(None)));

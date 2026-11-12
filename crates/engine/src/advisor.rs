@@ -57,6 +57,81 @@ pub fn parse_save_reply(text: &str) -> Option<bool> {
     (caps.get(2).is_some() || caps.get(5).is_some()).then_some(true)
 }
 
+/// 顧問不想回應時整個回覆只輸出的標記。
+pub const SKIP: &str = "<<SKIP>>";
+
+/// 依串流到目前為止的文字判斷是不是 SKIP；還無法判斷回 `None`。
+pub fn skip_prefix(buf: &str) -> Option<bool> {
+    let t = buf.trim_start();
+    if t.is_empty() || (SKIP.starts_with(t) && t.len() < SKIP.len()) {
+        return None;
+    }
+    Some(t.starts_with(SKIP))
+}
+
+static LIST_MARK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:[-•・]\s*|\d+[.、)]\s*)").unwrap());
+
+/// 唸出前去掉 markdown 符號與句首的條列、編號。
+pub fn speakable(sentence: &str) -> String {
+    let s: String = sentence.chars().filter(|c| !"*#`".contains(*c)).collect();
+    let s = s.trim();
+    LIST_MARK.replace(s, "").trim().to_string()
+}
+
+/// 這次顧問討論的逐輪紀錄，連線中斷重連時用來補前情。
+#[derive(Debug, Default)]
+pub struct Transcript {
+    turns: Vec<(String, String)>,
+}
+
+impl Transcript {
+    pub fn push(&mut self, user: &str, reply: &str) {
+        self.turns.push((user.to_string(), reply.to_string()));
+    }
+
+    pub fn len(&self) -> usize {
+        self.turns.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.turns.is_empty()
+    }
+
+    pub fn recap(&self) -> String {
+        if self.turns.is_empty() {
+            return String::new();
+        }
+        let mut out = String::from("[前情提要] 先前的連線中斷了，以下是這次討論到目前為止的內容，接著討論就好：\n");
+        for (u, r) in &self.turns {
+            out.push_str(&format!("使用者：{u}\n小小：{r}\n"));
+        }
+        out.push_str("[前情提要結束]\n");
+        out
+    }
+}
+
+/// 討論結束時整理出的三段。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Summary {
+    pub say: String,
+    pub topic: String,
+    pub notes: String,
+}
+
+/// 依 `<<SAY>>`、`<<TOPIC>>`、`<<NOTES>>` 切三段；缺段或空段回 `None`。
+pub fn parse_summary(reply: &str) -> Option<Summary> {
+    let (_, rest) = reply.split_once("<<SAY>>")?;
+    let (say, rest) = rest.split_once("<<TOPIC>>")?;
+    let (topic, notes) = rest.split_once("<<NOTES>>")?;
+    let topic = topic.trim().lines().next().unwrap_or("").trim();
+    let (say, notes) = (say.trim(), notes.trim());
+    if say.is_empty() || topic.is_empty() || notes.is_empty() {
+        return None;
+    }
+    Some(Summary { say: say.into(), topic: topic.into(), notes: notes.into() })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +179,50 @@ mod tests {
         for t in ["等等，再補一點", "好了", "先這樣", "那匯出呢"] {
             assert_eq!(parse_save_reply(t), None, "{t}");
         }
+    }
+
+    #[test]
+    fn skip_marker_is_decided_from_the_prefix() {
+        assert_eq!(skip_prefix(""), None);
+        assert_eq!(skip_prefix("<<SK"), None);
+        assert_eq!(skip_prefix("<<SKIP>>"), Some(true));
+        assert_eq!(skip_prefix(" <<SKIP>>\n"), Some(true));
+        assert_eq!(skip_prefix("這個"), Some(false));
+        assert_eq!(skip_prefix("<<S這"), Some(false));
+    }
+
+    #[test]
+    fn markdown_marks_are_not_spoken() {
+        for (t, want) in [
+            ("**重點**是先做登入。", "重點是先做登入。"),
+            ("- 先做登入。", "先做登入。"),
+            ("1. 先做登入。", "先做登入。"),
+            ("## 結論", "結論"),
+            ("這樣比較穩。", "這樣比較穩。"),
+        ] {
+            assert_eq!(speakable(t), want, "{t}");
+        }
+    }
+
+    #[test]
+    fn recap_lists_every_turn_in_order() {
+        let mut t = Transcript::default();
+        assert_eq!(t.recap(), "");
+        t.push("新功能怎麼排", "先做登入。");
+        t.push("那匯出呢", "下週再做。");
+        let r = t.recap();
+        assert!(r.starts_with("[前情提要]"), "{r}");
+        assert!(r.contains("使用者：新功能怎麼排\n小小：先做登入。\n使用者：那匯出呢\n小小：下週再做。\n"), "{r}");
+        assert!(r.ends_with("[前情提要結束]\n"), "{r}");
+        assert_eq!(t.len(), 2);
+    }
+
+    #[test]
+    fn summary_needs_all_three_parts() {
+        let s = parse_summary("好的。\n<<SAY>>我們談了新功能排程。\n<<TOPIC>>新功能排程\n多的一行\n<<NOTES>>\n- 先做登入\n- 再做匯出\n").unwrap();
+        assert_eq!(s, Summary { say: "我們談了新功能排程。".into(), topic: "新功能排程".into(), notes: "- 先做登入\n- 再做匯出".into() });
+        assert_eq!(parse_summary("<<SAY>>談了排程<<TOPIC>>排程"), None);
+        assert_eq!(parse_summary("<<SAY>><<TOPIC>>排程<<NOTES>>- a"), None);
+        assert_eq!(parse_summary("好。"), None);
     }
 }

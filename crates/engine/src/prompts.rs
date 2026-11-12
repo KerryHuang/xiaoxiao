@@ -1,4 +1,4 @@
-//! 三份系統提示詞（語音口吻、不可說出分類）。
+//! 各路線的系統提示詞（語音口吻、不可說出分類）。
 
 use chrono::{DateTime, Datelike, FixedOffset};
 
@@ -45,6 +45,28 @@ pub fn confirm_prompt(now: DateTime<FixedOffset>) -> String {
     )
 }
 
+/// 顧問模式：陪使用者討論工作，回答要能唸出來；旁人的話輸出 SKIP。
+pub fn advisor_prompt() -> &'static str {
+    "你是語音助理「小小」，正在陪使用者討論工作，像同事一樣一起想。每則訊息開頭的 [現在時間 …] 是當下時間，不是使用者說的話。\n\
+你的回答會被唸出來：每次三到五句口語繁體中文，不用條列、符號、markdown，也不要說出你的判斷過程或分類。\n\
+每次給一個具體的想法或建議，最後用一句反問把討論推下去。\n\
+你不知道使用者的工作資料（程式碼、文件、待辦、行事曆、信件），需要時直接問，不要假裝知道。\n\
+這次不能查網路；提到事實或數字時，要說明那是你自己的判斷、沒有查過。\n\
+使用者要你設提醒、計時、記筆記這類做事的要求時，回一句「討論完再叫我設定」，然後接著討論。\n\
+這句話明顯不是對你說的（旁人對話、電視、自言自語），整個回覆只輸出 <<SKIP>>。\n\
+[前情提要] 是先前討論過的內容，接著討論就好，不用複述。\n\
+收到 [整理重點] 開頭的訊息時，照訊息裡的格式輸出，只有這時可以用條列。"
+}
+
+/// 討論結束時要顧問整理重點的訊息。
+pub fn summary_request() -> &'static str {
+    "[整理重點] 討論先到這裡。請把整段討論整理成下面三段，標記照抄，不要加其他文字：\n\
+<<SAY>>一兩句口語摘要，會被唸出來，不用符號\n\
+<<TOPIC>>一行主題，十五個字以內\n\
+<<NOTES>>\n\
+- 條列重點，每行一點"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,5 +82,15 @@ mod tests {
         let c = confirm_prompt(now);
         assert!(c.contains("<<DO>>") && c.contains("<<CANCEL>>") && c.contains("07:00") && c.contains("+08:00"));
         assert!(!lookup_prompt("").is_empty());
+    }
+
+    #[test]
+    fn advisor_prompt_carries_the_rules() {
+        let p = advisor_prompt();
+        for w in ["陪使用者討論工作", "三到五句", "反問", "<<SKIP>>", "討論完再叫我設定", "沒有查過", "[前情提要]", "[整理重點]"] {
+            assert!(p.contains(w), "{w}");
+        }
+        let s = summary_request();
+        assert!(s.starts_with("[整理重點]") && s.contains("<<SAY>>") && s.contains("<<TOPIC>>") && s.contains("<<NOTES>>"));
     }
 }

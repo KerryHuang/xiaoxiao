@@ -1430,6 +1430,18 @@ fn three_skips_in_a_row_end_advising() {
 }
 
 #[test]
+fn skip_at_save_prompt_means_no_answer() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "電視一", "電視二", "電視三", "電視四"]);
+    r.wait("問存檔後旁人又講一句", |_, _| advisor_msgs(&r).len() >= 6);
+    r.wait("回待命", |_, s| s == State::Idle);
+    assert_eq!(r.said().iter().filter(|s| *s == "要存重點嗎").count(), 1, "不重唸摘要：{:?}", r.said());
+    assert_eq!(r.said().iter().filter(|s| *s == "我們談了新功能排程。").count(), 1, "{:?}", r.said());
+    assert!(notes(&r).is_none());
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.lines().any(|l| l.contains(r#""ev":"advise_save""#) && l.contains(r#""saved":false"#)), "{log}");
+}
+
+#[test]
 fn three_skips_with_nothing_discussed_end_quietly() {
     let r = discuss("advise", timing(), &["我們來討論", "電視一", "電視二", "電視三"]);
     r.wait("三句都送出", |_, _| advisor_msgs(&r).len() == 3);

@@ -669,7 +669,7 @@ impl<P: Platform> Engine<P> {
                 self.to_idle();
             }
         } else if advising {
-            self.advise_turn(&text);
+            self.advise_turn(&text, false);
         } else if confirming && self.discussion.is_some() {
             self.save_reply(&text);
         } else if confirming {
@@ -743,12 +743,12 @@ impl<P: Platform> Engine<P> {
             self.speak("好，你說");
             self.open_window(State::Advising);
         } else {
-            self.advise_turn(rest);
+            self.advise_turn(rest, false);
         }
     }
 
     /// 顧問的一輪：整句送 sonnet，串流邊收邊唸；不走本機指令、不做事。
-    fn advise_turn(&mut self, text: &str) {
+    fn advise_turn(&mut self, text: &str, at_save_prompt: bool) {
         if is_end_advising(text) {
             return self.end_advising(EndReason::Phrase);
         }
@@ -813,6 +813,11 @@ impl<P: Platform> Engine<P> {
                     d.history.push(text, &full);
                     d.skips = 0;
                 } else {
+                    if at_save_prompt {
+                        // 存檔問句收到旁人的話：當沒回答，不再整理一次
+                        self.log.log("advise_save", json!({"saved": false}));
+                        return self.to_idle();
+                    }
                     d.skips += 1;
                 }
                 d.failures = 0;
@@ -891,7 +896,7 @@ impl<P: Platform> Engine<P> {
             if let Some(d) = self.discussion.as_mut() {
                 d.summary = None;
             }
-            self.advise_turn(text);
+            self.advise_turn(text, true);
         }
     }
 

@@ -1451,18 +1451,24 @@ fn advisor_restart_gets_the_discussion_so_far() {
 
 #[test]
 fn two_failures_in_a_row_end_and_offer_to_save() {
-    let r = discuss("advise-flaky", timing(), &["我們來討論", "新功能怎麼排", "那匯出呢", "還有登入"]);
+    let t = Timing { advise_blocks: 3000, ..timing() };
+    let r = discuss("advise-flaky", t, &["我們來討論", "新功能怎麼排", "那匯出呢", "還有登入"]);
     r.wait("結束回待命", |w, s| w.said.last().is_some_and(|x| x == "存不了，先這樣") && s == State::Idle);
     assert_eq!(r.said(), ["我在", "好，你說", REPLY, "回答中斷了。", "回答中斷了。", "存不了，先這樣"]);
     assert!(notes(&r).is_none());
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.lines().any(|l| l.contains(r#""ev":"advise_end""#) && l.contains(r#""reason":"failures""#) && l.contains(r#""turns":1"#)), "{log}");
 }
 
 #[test]
 fn two_failures_with_nothing_discussed_end_quietly() {
-    let r = discuss("advise-dead", timing(), &["我們來討論", "第一句", "第二句"]);
+    let t = Timing { advise_blocks: 3000, ..timing() };
+    let r = discuss("advise-dead", t, &["我們來討論", "第一句", "第二句"]);
     r.wait("結束回待命", |w, s| w.said.len() == 4 && s == State::Idle);
     std::thread::sleep(Duration::from_millis(50));
     assert_eq!(r.said(), ["我在", "好，你說", "回答中斷了。", "回答中斷了。"]);
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.lines().any(|l| l.contains(r#""ev":"advise_end""#) && l.contains(r#""reason":"failures""#)), "{log}");
 }
 
 #[test]

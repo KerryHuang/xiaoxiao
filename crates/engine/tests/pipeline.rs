@@ -1223,10 +1223,10 @@ fn stream_dead_reopens_without_waiting_for_check() {
 
 #[test]
 fn entering_phrase_starts_advising() {
-    let r = discuss("advise", timing(), &["我們來討論"]);
+    let r = discuss("advise", Timing { advise_blocks: 3000, ..timing() }, &["我們來討論"]);
     let spawns = r.dir.path().join("claude-args.spawns");
-    // 程序啟動要幾十毫秒，fake 才寫得出紀錄；一起等，免得搶在它前面讀
-    r.wait("進入顧問模式", |w, s| w.said == ["我在", "好，你說"] && s == State::Advising && spawns.exists());
+    // 程序啟動要幾十毫秒，fake 才寫得出紀錄；一起等，免得搶在它前面讀（fs::write 先建檔再寫入，所以要讀到換行）
+    r.wait("進入顧問模式", |w, s| w.said == ["我在", "好，你說"] && s == State::Advising && fs::read_to_string(&spawns).is_ok_and(|s| s.ends_with('\n')));
     assert_eq!(fs::read_to_string(&spawns).unwrap(), "spawn sonnet\n", "進入時就開好 sonnet");
 }
 
@@ -1314,13 +1314,14 @@ fn advising_sends_commands_and_reminders_to_sonnet() {
 
 #[test]
 fn advisor_model_comes_from_settings() {
-    let r = rig_full(tempfile::tempdir().unwrap(), "advise", Timing { advise_blocks: 400, ..timing() }, |s| s.advisor_model = "opus".into(), |w| {
+    let r = rig_full(tempfile::tempdir().unwrap(), "advise", timing(), |s| s.advisor_model = "opus".into(), |w| {
         w.script.extend(wake_and_ask());
         w.small.push_back("嘿小小".into());
-        w.turbo.push_back("我們來討論".into());
+        w.turbo.push_back("我們來討論一下新功能".into());
     });
     let spawns = r.dir.path().join("claude-args.spawns");
-    r.wait("開了顧問程序", |_, _| spawns.exists());
+    // 有後半句會直接問，等到回覆就代表程序已開（不靠窗口時間）
+    r.wait("開了顧問程序並回答", |w, _| w.said.len() == 2);
     assert_eq!(fs::read_to_string(&spawns).unwrap(), "spawn opus\n");
 }
 

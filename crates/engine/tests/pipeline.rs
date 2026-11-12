@@ -711,6 +711,22 @@ fn action_confirm_do_reminder() {
     assert!(s.contains("開會"));
 }
 
+/// 實機：快答偶爾不回 <<ACTION>>、直接說「已經幫你設好」，但什麼都沒寫。
+/// 要做事的句子不能交給快答決定，一律走確認對話。
+#[test]
+fn reminder_request_never_trusts_the_quick_answer() {
+    let r = rig("action-lies", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("明天早上九點提醒我開會".into());
+    });
+    r.wait("進入確認", |w, s| w.said.len() >= 2 && s == State::Confirming);
+    let said = r.said();
+    assert_eq!(said[0], "我在");
+    assert!(said[1].contains("對嗎"), "{said:?}");
+    assert!(!said.iter().any(|t| t.contains("設好")), "{said:?}");
+}
+
 #[test]
 fn followup_with_name_is_answered_without_the_name() {
     let r = rig("ok", |w| {

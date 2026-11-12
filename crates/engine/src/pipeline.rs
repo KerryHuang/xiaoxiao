@@ -16,7 +16,7 @@ use crate::local_cmd::{LocalCmd, parse_local};
 use crate::pause::{PauseReason, pause_reason};
 use crate::platform::*;
 use crate::prompts::{confirm_prompt, quick_message, quick_prompt};
-use crate::router::{Route, route_prefix};
+use crate::router::{Route, is_action_request, route_prefix};
 use crate::sentence::{SentenceSplitter, is_junk_transcript};
 use crate::wake::{strip_call_name, verify_text};
 use crate::weather::{find_city, forecast_url, parse_weather, say_weather};
@@ -699,6 +699,11 @@ impl<P: Platform> Engine<P> {
         let cfg = self.p.claude();
         let now = self.p.now();
         let (first, total) = (self.timing.quick_first_token, self.timing.quick_total);
+        if is_action_request(text) {
+            self.log.log("route", json!({"route": "Action", "by": "rule"}));
+            self.confirm = Some(Session::new(cfg, "haiku", &confirm_prompt(now)).with_timeouts(first, total));
+            return self.confirm_turn(text, true);
+        }
         let mut sess = self.take_quick();
         let mut buf = String::new();
         let mut route = None;

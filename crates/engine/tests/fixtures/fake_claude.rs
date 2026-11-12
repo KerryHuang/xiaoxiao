@@ -64,7 +64,7 @@ fn main() {
             read_one();
             println!(r#"{{"type":"result","is_error":true,"result":"Please run /login"}}"#);
         }
-        "action" | "action-repeat" => {
+        "action" | "action-repeat" | "action-lies" => {
             // 快答回 <<ACTION>>；確認對話（系統提示含「幫使用者做事」）第一輪複述、之後回 <<DO>>
             if args.iter().any(|a| a.contains("幫使用者做事")) {
                 let repeat = if mode == "action-repeat" { r#",\"repeat\":\"每天\""# } else { "" };
@@ -76,6 +76,12 @@ fn main() {
                             r#"<<DO>>{{\"type\":\"reminder\",\"at\":\"2099-01-01T09:00:00+08:00\",\"text\":\"開會\"{repeat}}}"#
                         ));
                     }
+                });
+            } else if mode == "action-lies" {
+                // 快答沒照規矩回 <<ACTION>>，直接謊稱做好了
+                each_line(|_| {
+                    delta("好，已經幫你設好提醒了。");
+                    result("好，已經幫你設好提醒了。");
                 });
             } else {
                 each_line(|_| {
@@ -92,19 +98,15 @@ fn main() {
                 result("一公斤是1000 公克。");
             });
         }
-        // 確認第一輪複述，第二輪判定偏題；快答第一題要做事，之後直接答
+        // 確認第一輪複述，第二輪判定偏題；快答一律直接答
         "action-other" => {
             if args.iter().any(|a| a.contains("幫使用者做事")) {
                 each_line(|n| if n == 1 { result("好，明天九點提醒你開會，對嗎？") } else { result("<<OTHER>>") });
             } else {
-                each_line(|n| {
-                    if n == 1 {
-                        delta("<<ACTION>>");
-                        result("<<ACTION>>");
-                    } else {
-                        delta("一公斤是1000 公克。");
-                        result("一公斤是1000 公克。");
-                    }
+                // 「提醒我…」由規則直接送確認對話，快答只會收到偏題後重問的那句
+                each_line(|_| {
+                    delta("一公斤是1000 公克。");
+                    result("一公斤是1000 公克。");
                 });
             }
         }

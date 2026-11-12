@@ -1289,7 +1289,8 @@ fn advising_waits_longer_before_cutting() {
     });
     r.wait("兩句都回答", |w, _| w.said.len() == 4);
     std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(advisor_msgs(&r).len(), 2, "停頓 1 秒或講 12 秒都不能被切成兩句");
+    // 窗口逾時現在會再送一則 [整理重點]，不算使用者的句子
+    assert_eq!(advisor_msgs(&r).iter().filter(|m| !m.contains("[整理重點]")).count(), 2, "停頓 1 秒或講 12 秒都不能被切成兩句");
     assert_eq!(r.w.lock().unwrap().turbo.len(), 1);
 }
 
@@ -1335,4 +1336,84 @@ fn entering_phrase_beats_weather() {
     assert!(r.w.lock().unwrap().urls.is_empty(), "不該打天氣 API");
     assert_eq!(fs::read_to_string(r.dir.path().join("claude-args.spawns")).unwrap(), "spawn sonnet\n");
     assert!(advisor_msgs(&r)[0].contains("明天天氣"));
+}
+
+fn notes(r: &Rig) -> Option<String> {
+    fs::read_to_string(r.dir.path().join("notes.md")).ok()
+}
+
+#[test]
+fn end_phrase_reads_summary_and_saves_on_yes() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣", "對"]);
+    r.wait("存好回待命", |w, s| w.said.last().is_some_and(|x| x == "存好了") && s == State::Idle);
+    assert_eq!(r.said(), ["我在", "好，你說", REPLY, "我們談了新功能排程。", "要存重點嗎", "存好了"]);
+    let n = notes(&r).unwrap();
+    let head = n.lines().next().unwrap();
+    assert!(head.starts_with("## ") && head.ends_with(" 新功能排程"), "標題是「日期 時間 主題」：{head}");
+    assert!(n.contains("- 先做登入\n- 再做匯出"), "{n}");
+    assert!(advisor_msgs(&r).last().unwrap().contains("[整理重點]"));
+}
+
+#[test]
+fn saying_no_at_save_prompt_writes_nothing() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣", "不用"]);
+    r.wait("不存回待命", |w, s| w.said.len() == 6 && s == State::Idle);
+    assert_eq!(r.said()[5], "好");
+    assert!(notes(&r).is_none());
+}
+
+#[test]
+fn no_answer_at_save_prompt_writes_nothing() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣"]);
+    r.wait("問存檔", |w, _| w.said.last().is_some_and(|x| x == "要存重點嗎"));
+    r.wait("8 秒沒回答就回待命", |_, s| s == State::Idle);
+    assert!(notes(&r).is_none());
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.lines().any(|l| l.contains(r#""ev":"advise_save""#) && l.contains(r#""saved":false"#)), "{log}");
+}
+
+#[test]
+fn end_phrase_at_save_prompt_writes_nothing() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣", "先這樣"]);
+    r.wait("不存回待命", |w, s| w.said.len() == 6 && s == State::Idle);
+    assert_eq!(r.said()[5], "好");
+    assert!(notes(&r).is_none());
+    assert_eq!(advisor_msgs(&r).iter().filter(|m| m.contains("[整理重點]")).count(), 1, "不能再摘要一次");
+}
+
+#[test]
+fn other_answer_at_save_prompt_goes_back_to_advising() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣", "等等，再補一點匯出"]);
+    r.wait("回到討論", |w, s| w.said.len() == 6 && s == State::Advising);
+    assert_eq!(r.said()[5], REPLY);
+    let m = advisor_msgs(&r);
+    assert!(m.last().unwrap().contains("再補一點匯出") && !m.last().unwrap().contains("[整理重點]"));
+    assert!(notes(&r).is_none());
+}
+
+#[test]
+fn silence_in_advising_window_offers_to_save() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排"]);
+    r.wait("沉默後問存檔", |w, s| w.said.last().is_some_and(|x| x == "要存重點嗎") && s == State::Confirming);
+    assert_eq!(r.said()[3], "我們談了新功能排程。");
+}
+
+#[test]
+fn ending_with_nothing_discussed_does_not_summarize() {
+    let r = discuss("advise", timing(), &["我們來討論", "先這樣"]);
+    r.wait("回待命", |w, s| w.said.len() == 3 && s == State::Idle);
+    assert_eq!(r.said(), ["我在", "好，你說", "好"]);
+    assert!(advisor_msgs(&r).is_empty(), "沒談過就不花 token 摘要");
+}
+
+#[test]
+fn advising_logs_events_without_text() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣", "對"]);
+    r.wait("存好回待命", |w, s| w.said.last().is_some_and(|x| x == "存好了") && s == State::Idle);
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.contains(r#""ev":"advise_start""#), "{log}");
+    assert!(log.lines().any(|l| l.contains(r#""ev":"advise_end""#) && l.contains(r#""reason":"phrase""#) && l.contains(r#""turns":1"#)), "{log}");
+    assert!(log.lines().any(|l| l.contains(r#""ev":"advise_save""#) && l.contains(r#""saved":true"#)), "{log}");
+    assert!(log.lines().any(|l| l.contains(r#""ev":"advise_turn""#) && l.contains("latency_ms")), "{log}");
+    assert!(!log.contains("新功能") && !log.contains("先做登入"), "不記內容：{log}");
 }

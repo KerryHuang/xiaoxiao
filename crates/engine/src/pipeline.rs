@@ -8,7 +8,7 @@ use chrono::{DateTime, Datelike, FixedOffset, Timelike};
 use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
-use crate::advisor::{Transcript, enter_advising, speakable};
+use crate::advisor::{Summary, Transcript, enter_advising, is_end_advising, parse_save_reply, parse_summary, speakable};
 use crate::audio::{rms, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
@@ -16,7 +16,7 @@ use crate::events::EventLog;
 use crate::local_cmd::{LocalCmd, parse_local};
 use crate::pause::{PauseReason, pause_reason};
 use crate::platform::*;
-use crate::prompts::{advisor_prompt, confirm_prompt, quick_message, quick_prompt};
+use crate::prompts::{advisor_prompt, confirm_prompt, quick_message, quick_prompt, summary_request};
 use crate::router::{Route, is_action_request, route_prefix};
 use crate::sentence::{SentenceSplitter, is_junk_transcript};
 use crate::wake::{strip_call_name, verify_text};
@@ -159,6 +159,23 @@ impl EngineHandle {
 struct Discussion {
     sess: Session,
     history: Transcript,
+    /// 結束時整理好、等使用者決定要不要存的重點。
+    summary: Option<Summary>,
+}
+
+/// 顧問模式為什麼結束。
+enum EndReason {
+    Phrase,
+    Silence,
+}
+
+impl EndReason {
+    fn as_str(&self) -> &'static str {
+        match self {
+            EndReason::Phrase => "phrase",
+            EndReason::Silence => "silence",
+        }
+    }
 }
 
 struct Timer {
@@ -495,7 +512,14 @@ impl<P: Platform> Engine<P> {
                             "window_timeout",
                             json!({"peak": self.window_peak, "floor": self.vad.floor(), "speech_blocks": self.window_speech}),
                         );
-                        self.to_idle();
+                        if self.state() == State::Advising {
+                            self.end_advising(EndReason::Silence);
+                        } else {
+                            if self.state() == State::Confirming && self.discussion.is_some() {
+                                self.log.log("advise_save", json!({"saved": false}));
+                            }
+                            self.to_idle();
+                        }
                     }
                 }
             }
@@ -621,6 +645,8 @@ impl<P: Platform> Engine<P> {
             }
         } else if advising {
             self.advise_turn(&text);
+        } else if confirming && self.discussion.is_some() {
+            self.save_reply(&text);
         } else if confirming {
             if parse_local(&text).is_some() {
                 self.confirm = None;
@@ -687,7 +713,7 @@ impl<P: Platform> Engine<P> {
             let _rt = self.rt.enter();
             let _ = sess.warm();
         }
-        self.discussion = Some(Discussion { sess, history: Transcript::default() });
+        self.discussion = Some(Discussion { sess, history: Transcript::default(), summary: None });
         if rest.is_empty() {
             self.speak("好，你說");
             self.open_window(State::Advising);
@@ -698,6 +724,9 @@ impl<P: Platform> Engine<P> {
 
     /// 顧問的一輪：整句送 sonnet，串流邊收邊唸；不走本機指令、不做事。
     fn advise_turn(&mut self, text: &str) {
+        if is_end_advising(text) {
+            return self.end_advising(EndReason::Phrase);
+        }
         let Some(mut d) = self.discussion.take() else { return self.to_idle() };
         self.set_state(State::Thinking);
         let now = self.p.now();
@@ -748,6 +777,62 @@ impl<P: Platform> Engine<P> {
             }
         }
         self.open_window(State::Advising);
+    }
+
+    /// 結束顧問模式：談過就請 sonnet 整理重點、唸出來並問要不要存；沒談過直接回待命。
+    fn end_advising(&mut self, why: EndReason) {
+        let Some(mut d) = self.discussion.take() else { return self.to_idle() };
+        self.log.log("advise_end", json!({"reason": why.as_str(), "turns": d.history.len()}));
+        if d.history.is_empty() {
+            if matches!(why, EndReason::Phrase) {
+                self.speak("好");
+            }
+            return self.to_idle();
+        }
+        self.set_state(State::Thinking);
+        let r = self.rt.block_on(d.sess.ask(summary_request(), |_| {}));
+        match r.ok().and_then(|full| parse_summary(&full)) {
+            None => {
+                self.speak("存不了，先這樣");
+                self.to_idle();
+            }
+            Some(sum) => {
+                let say = speakable(&sum.say);
+                d.summary = Some(sum);
+                self.discussion = Some(d);
+                self.speak(&say);
+                self.speak("要存重點嗎");
+                self.open_window(State::Confirming);
+            }
+        }
+    }
+
+    /// 「要存重點嗎」的回答：說對才存；說不要或再講結束語就算了；其他當作繼續討論。
+    fn save_reply(&mut self, text: &str) {
+        let reply = parse_save_reply(text);
+        if reply == Some(true) {
+            let now = self.p.now();
+            let sum = self.discussion.as_mut().and_then(|d| d.summary.take());
+            let Some(sum) = sum else { return self.to_idle() };
+            let title = format!("{} {}", now.format("%Y-%m-%d %H:%M"), sum.topic);
+            let note = Action::Note { text: sum.notes, title: Some(title) };
+            let r = append_note(&self.settings.notes_path, &note, now);
+            self.log.log("advise_save", json!({"saved": r.is_ok()}));
+            match r {
+                Ok(()) => self.speak("存好了"),
+                Err(e) => self.speak(&format!("筆記沒有寫進去：{e}")),
+            }
+            self.to_idle();
+        } else if reply == Some(false) || is_end_advising(text) {
+            self.log.log("advise_save", json!({"saved": false}));
+            self.speak("好");
+            self.to_idle();
+        } else {
+            if let Some(d) = self.discussion.as_mut() {
+                d.summary = None;
+            }
+            self.advise_turn(text);
+        }
     }
 
     /// 台灣縣市的天氣問句直接查，不花 token。回 `false` 代表這句要交給 Claude。

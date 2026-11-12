@@ -13,6 +13,9 @@ const AGC_MAX: f32 = 30.0;
 pub const SPEECH_RMS: f32 = 0.02;
 const PAUSE_BLOCKS: usize = 8;
 const MAX_BLOCKS: usize = 100;
+/// 顧問模式：停頓 1.5 秒算講完、最長 30 秒。
+pub const ADVISE_PAUSE_BLOCKS: usize = 15;
+pub const ADVISE_MAX_BLOCKS: usize = 300;
 const NO_SPEECH_BLOCKS: usize = 60;
 
 /// 只保留最近 N 秒的環形緩衝（只在記憶體）。
@@ -160,17 +163,22 @@ pub enum EndpointEvent {
     TooLong(Vec<f32>),
 }
 
-/// 錄問題：停頓 0.8 秒算講完、最長 10 秒、6 秒沒開口就放棄。輸入是增益後的訊號。
+/// 錄問題：停頓 0.8 秒算講完、最長 10 秒、6 秒沒開口就放棄。輸入是增益後的訊號。顧問模式用 `ADVISE_*`（見 `with_limits`）。
 pub struct Endpointer {
     audio: Vec<f32>,
     blocks: usize,
     spoke: bool,
     silent: usize,
+    pause: usize,
+    max: usize,
 }
 
 impl Endpointer {
     pub fn new() -> Self {
-        Self { audio: Vec::new(), blocks: 0, spoke: false, silent: 0 }
+        Self::with_limits(PAUSE_BLOCKS, MAX_BLOCKS)
+    }
+    pub fn with_limits(pause_blocks: usize, max_blocks: usize) -> Self {
+        Self { audio: Vec::new(), blocks: 0, spoke: false, silent: 0, pause: pause_blocks, max: max_blocks }
     }
     /// `speech`：這塊有沒有人講話（由 SpeechDetector 判斷）。
     pub fn push(&mut self, gained: &[f32], speech: bool) -> EndpointEvent {
@@ -182,10 +190,10 @@ impl Endpointer {
         } else {
             self.silent += 1;
         }
-        if self.spoke && self.silent >= PAUSE_BLOCKS {
+        if self.spoke && self.silent >= self.pause {
             return EndpointEvent::Done(std::mem::take(&mut self.audio));
         }
-        if self.blocks >= MAX_BLOCKS {
+        if self.blocks >= self.max {
             return if self.spoke { EndpointEvent::TooLong(std::mem::take(&mut self.audio)) } else { EndpointEvent::NoSpeech };
         }
         if !self.spoke && self.blocks >= NO_SPEECH_BLOCKS {
@@ -311,6 +319,24 @@ mod tests {
             assert!(matches!(e.push(&vec![0.0; BLOCK], false), EndpointEvent::Continue));
         }
         assert!(matches!(e.push(&vec![0.0; BLOCK], false), EndpointEvent::NoSpeech));
+    }
+
+    #[test]
+    fn advising_endpointer_waits_1_5s_pause() {
+        let mut e = Endpointer::with_limits(ADVISE_PAUSE_BLOCKS, ADVISE_MAX_BLOCKS);
+        for _ in 0..10 { assert!(matches!(e.push(&sine(0.5, BLOCK), true), EndpointEvent::Continue)); }
+        for i in 0..15 {
+            let ev = e.push(&vec![0.0; BLOCK], false);
+            if i < 14 { assert!(matches!(ev, EndpointEvent::Continue), "第 {i} 塊靜音就切了"); }
+            else { assert!(matches!(ev, EndpointEvent::Done(ref a) if a.len() == 25 * BLOCK)); }
+        }
+    }
+
+    #[test]
+    fn advising_endpointer_caps_at_30s() {
+        let mut e = Endpointer::with_limits(ADVISE_PAUSE_BLOCKS, ADVISE_MAX_BLOCKS);
+        for _ in 0..299 { assert!(matches!(e.push(&sine(0.5, BLOCK), true), EndpointEvent::Continue)); }
+        assert!(matches!(e.push(&sine(0.5, BLOCK), true), EndpointEvent::TooLong(ref a) if a.len() == 300 * BLOCK));
     }
 
     #[test]

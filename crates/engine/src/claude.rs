@@ -14,7 +14,7 @@ use crate::prompts::lookup_prompt;
 pub const IDLE_RESET: Duration = Duration::from_secs(5 * 60);
 pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(45);
 /// 快答等第一段文字的上限、整個回答的上限；超過就砍掉程序回 Timeout，引擎不會卡住。
-pub const FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(15);
+pub const FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(8);
 pub const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 查資料讀本機檔案時一律排除。
@@ -390,4 +390,17 @@ pub async fn lookup(cfg: &ClaudeCfg, q: &str, timeout: Duration) -> Result<Strin
     })?;
     let answer = spoken_answer(&result_of(&v)?);
     if answer.is_empty() { Err(ClaudeError::Garbage) } else { Ok(answer) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 斷網時 claude 只會默默重試，唯一的徵兆是等不到第一段文字；
+    /// 實測 Mac 冷啟動到第一段文字約 1.5 秒，Windows 啟動約 5 秒（喚醒時已先開好），所以 8 秒就該放棄。
+    #[test]
+    fn offline_gives_up_within_eight_seconds() {
+        assert!(FIRST_TOKEN_TIMEOUT <= Duration::from_secs(8), "{FIRST_TOKEN_TIMEOUT:?}");
+        assert!(FIRST_TOKEN_TIMEOUT >= Duration::from_secs(6), "太短會把 Windows 冷啟動誤判成斷網");
+    }
 }

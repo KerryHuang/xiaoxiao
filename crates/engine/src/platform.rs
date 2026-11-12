@@ -12,6 +12,11 @@ pub enum AudioError {
 pub trait AudioSource: Send {
     fn open(&mut self, device: Option<&str>) -> Result<(), AudioError>;
     fn read_block(&mut self) -> Result<Vec<f32>, AudioError>;
+    /// 取走已經收進來、還沒讀的整塊聲音（不阻塞）。喚醒複核期間使用者可能已經開口，
+    /// 呼叫端要先取走，再 `flush` 丟掉播放回音。
+    fn take_buffered(&mut self) -> Vec<Vec<f32>> {
+        vec![]
+    }
     /// 丟掉已經收進來、還沒讀的聲音（小小講完話後呼叫，避免聽到自己）。
     fn flush(&mut self) {}
     /// 開的是系統預設輸入，而系統預設已經換成別的裝置（呼叫端應重開）。

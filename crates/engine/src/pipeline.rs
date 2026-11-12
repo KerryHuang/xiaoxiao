@@ -182,6 +182,9 @@ pub struct Engine<P: Platform> {
     awake_pending: bool,
 }
 
+/// 已經處理過（增益、說話判斷）的一塊聲音。
+type Gained = (Vec<f32>, bool);
+
 impl<P: Platform> Engine<P> {
     pub fn new(p: P, settings: Settings) -> Self {
         Self::with_timing(p, settings, Timing::default())
@@ -500,6 +503,8 @@ impl<P: Platform> Engine<P> {
     fn ack(&mut self) {
         self.followups = 0;
         self.name_hinted = false;
+        // 喚醒複核要幾百毫秒，連著講的人這時已經開口；先取走，不然 flush 會連字一起丟
+        let early = self.early_speech();
         self.warm_quick();
         self.set_state(State::Acking);
         self.p.speaker().chime();
@@ -507,6 +512,27 @@ impl<P: Platform> Engine<P> {
         self.after_speaking();
         self.ep = Some(Endpointer::new());
         self.set_state(State::Listening);
+        for (g, speech) in early {
+            if self.state() != State::Listening {
+                break;
+            }
+            self.speech = speech;
+            self.listen(&g);
+        }
+    }
+
+    /// 取走已在緩衝裡的聲音，從第一塊有人講話的開始留；前面的靜音不算進「6 秒沒開口」。
+    fn early_speech(&mut self) -> Vec<Gained> {
+        let blocks = self.p.audio().take_buffered();
+        let mut out: Vec<Gained> = vec![];
+        for b in blocks {
+            let g = self.agc.process(&b);
+            let speech = self.vad.push(&b, self.agc.gain());
+            if speech || !out.is_empty() {
+                out.push((g, speech));
+            }
+        }
+        out
     }
 
     /// 說完話：丟掉期間收到的聲音（包含自己的聲音），重設喚醒器。

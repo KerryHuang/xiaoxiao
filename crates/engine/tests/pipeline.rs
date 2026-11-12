@@ -52,6 +52,10 @@ struct World {
     start_resting: bool,
     http: VecDeque<Result<String, String>>,
     urls: Vec<String>,
+    /// 喚醒複核（小模型聽寫）進行期間，script 最前面有幾塊已經進了系統緩衝。
+    verify_backlog: usize,
+    /// 目前躺在系統緩衝、還沒被讀走的塊數（script 最前面）。
+    buffered: usize,
 }
 
 type W = Arc<Mutex<World>>;
@@ -90,9 +94,27 @@ impl AudioSource for FakeAudio {
     fn default_changed(&self) -> bool {
         self.0.lock().unwrap().default_changed
     }
+    fn take_buffered(&mut self) -> Vec<Vec<f32>> {
+        let mut w = self.0.lock().unwrap();
+        let k = std::mem::take(&mut w.buffered).min(w.script.len());
+        let mut out = vec![];
+        for _ in 0..k {
+            if let Some(Item::Block(b)) = w.script.pop_front() {
+                out.push(match b {
+                    Kind::Silence => vec![0.0; BLOCK],
+                    _ => vec![0.3; BLOCK],
+                });
+            }
+        }
+        out
+    }
     fn flush(&mut self) {
-        // 播放期間「收到」的回音要被丟掉
-        self.0.lock().unwrap().script.retain(|i| !matches!(i, Item::Block(Kind::Echo)));
+        // 播放期間「收到」的回音要被丟掉；緩衝裡還沒讀走的也一併丟掉
+        let mut w = self.0.lock().unwrap();
+        for _ in 0..std::mem::take(&mut w.buffered).min(w.script.len()) {
+            w.script.pop_front();
+        }
+        w.script.retain(|i| !matches!(i, Item::Block(Kind::Echo)));
     }
     fn close(&mut self) {
         self.0.lock().unwrap().closes += 1;
@@ -115,6 +137,9 @@ struct FakeAsr(W, bool);
 impl Transcriber for FakeAsr {
     fn transcribe(&self, _a: &[f32]) -> Result<String, String> {
         let mut w = self.0.lock().unwrap();
+        if self.1 {
+            w.buffered = w.verify_backlog;
+        }
         let q = if self.1 { &mut w.small } else { &mut w.turbo };
         Ok(q.pop_front().unwrap_or_default())
     }
@@ -350,6 +375,22 @@ fn wake_then_quick_answer() {
     r.wait("回答完回待命", |w, s| w.said.len() == 2 && s == State::Idle);
     assert_eq!(r.said(), ["我在", "一公斤是1000 公克。"]);
     assert_eq!(r.w.lock().unwrap().chimes, 1);
+}
+
+/// 實機：「嘿，小小，幾點了」連著講。複核聽寫期間進來的字，不能被「叮」之後的 flush 一起丟掉。
+#[test]
+fn speech_during_wake_verify_is_not_lost() {
+    let r = rig("ok", |w| {
+        w.script.extend(n(Kind::Silence, 3));
+        w.script.extend(n(Kind::Wake, 1));
+        w.script.extend(n(Kind::Silence, 4)); // 命中後的尾巴
+        w.script.extend(utterance()); // 這 5 塊字＋後面的停頓在複核時已進緩衝
+        w.verify_backlog = 15;
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+    });
+    r.wait("回答完回待命", |w, s| w.said.len() == 2 && s == State::Idle);
+    assert_eq!(r.said(), ["我在", "一公斤是1000 公克。"]);
 }
 
 #[test]

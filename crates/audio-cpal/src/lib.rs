@@ -139,6 +139,24 @@ impl AudioSource for CpalAudio {
         Ok(out)
     }
 
+    fn take_buffered(&mut self) -> Vec<Vec<f32>> {
+        let Some(r) = self.run.as_mut() else { return vec![] };
+        while let Ok(m) = r.rx.try_recv() {
+            if let Msg::Data(d) = m {
+                r.pending.extend(d);
+            }
+        }
+        let need = (r.rate as usize).div_ceil(10);
+        let mut out = vec![];
+        while r.pending.len() >= need {
+            let chunk: Vec<f32> = r.pending.drain(..need).collect();
+            let mut b = if r.rate == engine::audio::SR { chunk } else { resample_to_16k(&chunk, r.rate) };
+            b.resize(BLOCK, 0.0);
+            out.push(b);
+        }
+        out
+    }
+
     fn flush(&mut self) {
         if let Some(r) = self.run.as_mut() {
             while r.rx.try_recv().is_ok() {}

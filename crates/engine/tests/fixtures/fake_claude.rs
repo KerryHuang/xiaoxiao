@@ -135,7 +135,7 @@ fn main() {
         "spawns" => {
             let path = out.expect("spawns 模式要有輸出路徑");
             let old = std::fs::read_to_string(&path).unwrap_or_default();
-            std::fs::write(&path, format!("{old}spawn\n")).unwrap();
+            std::fs::write(&path, format!("{old}spawn {}\n", std::process::id())).unwrap();
             each_line(|_| result("好。"));
         }
         // 把收到的每則訊息逐行記下來

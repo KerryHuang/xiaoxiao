@@ -451,8 +451,23 @@ fn resting_closes_the_warm_claude() {
     let spawns = r.dir.path().join("claude-args.txt");
     let count = || fs::read_to_string(&spawns).map(|s| s.lines().count()).unwrap_or(0);
     r.wait("第一次叫醒開好 claude", |_, _| count() == 1);
+    let first_pid = fs::read_to_string(&spawns).unwrap().split_whitespace().nth(1).unwrap().to_string();
     r.h.set_resting(true);
     r.wait("進入休息", |_, s| s == State::Paused);
+    // 不只要少開，舊程序一定要真的結束（記憶體才會還）。被殺但還沒被收屍的殭屍（Z）不佔記憶體，算結束
+    #[cfg(unix)]
+    {
+        let alive = || {
+            let o = std::process::Command::new("ps").args(["-o", "stat=", "-p", &first_pid]).output().unwrap();
+            let st = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            !st.is_empty() && !st.starts_with('Z')
+        };
+        let t0 = Instant::now();
+        while alive() && t0.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!alive(), "休息後常駐的 claude 程序還活著（pid {first_pid}）");
+    }
     r.h.set_resting(false);
     r.wait("離開休息", |_, s| s != State::Paused);
     {

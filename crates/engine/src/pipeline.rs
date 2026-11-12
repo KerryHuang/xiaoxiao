@@ -8,7 +8,7 @@ use chrono::{DateTime, Datelike, FixedOffset, Timelike};
 use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
-use crate::advisor::{Summary, Transcript, enter_advising, is_end_advising, parse_save_reply, parse_summary, speakable};
+use crate::advisor::{Summary, Transcript, enter_advising, is_end_advising, parse_save_reply, parse_summary, skip_prefix, speakable};
 use crate::audio::{rms, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
@@ -31,6 +31,8 @@ const VERIFY_SECS: f32 = 3.9;
 const ONSET_BLOCKS: usize = 3;
 /// 不喊喚醒詞最多連開幾次追問窗口；之後要重新喊「嘿，小小」。
 const MAX_FOLLOWUP_WINDOWS: u32 = 3;
+/// 顧問模式連續幾次判斷是旁人的話（SKIP）就結束。
+const MAX_SKIPS: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -161,12 +163,15 @@ struct Discussion {
     history: Transcript,
     /// 結束時整理好、等使用者決定要不要存的重點。
     summary: Option<Summary>,
+    /// 連續被判定為旁人的話的次數；正常回應就歸零。
+    skips: u32,
 }
 
 /// 顧問模式為什麼結束。
 enum EndReason {
     Phrase,
     Silence,
+    Skips,
 }
 
 impl EndReason {
@@ -174,6 +179,7 @@ impl EndReason {
         match self {
             EndReason::Phrase => "phrase",
             EndReason::Silence => "silence",
+            EndReason::Skips => "skips",
         }
     }
 }
@@ -713,7 +719,7 @@ impl<P: Platform> Engine<P> {
             let _rt = self.rt.enter();
             let _ = sess.warm();
         }
-        self.discussion = Some(Discussion { sess, history: Transcript::default(), summary: None });
+        self.discussion = Some(Discussion { sess, history: Transcript::default(), summary: None, skips: 0 });
         if rest.is_empty() {
             self.speak("好，你說");
             self.open_window(State::Advising);
@@ -730,6 +736,8 @@ impl<P: Platform> Engine<P> {
         let Some(mut d) = self.discussion.take() else { return self.to_idle() };
         self.set_state(State::Thinking);
         let now = self.p.now();
+        let mut buf = String::new();
+        let mut skip = None;
         let mut split = SentenceSplitter::default();
         let mut spoke = false;
         let t0 = Instant::now();
@@ -745,27 +753,50 @@ impl<P: Platform> Engine<P> {
                 }
             };
             self.rt.block_on(d.sess.ask(&quick_message(now, text), |delta| {
-                for s in split.push(delta) {
-                    say(&s);
-                    spoke = true;
+                // 還判斷不出是不是 SKIP 之前先累積不唸
+                if skip.is_none() {
+                    buf.push_str(delta);
+                    skip = skip_prefix(&buf);
+                    if skip == Some(false) {
+                        for s in split.push(&buf) {
+                            say(&s);
+                            spoke = true;
+                        }
+                    }
+                } else if skip == Some(false) {
+                    for s in split.push(delta) {
+                        say(&s);
+                        spoke = true;
+                    }
                 }
             }))
         };
+        let mut skipped = false;
         match r {
             Ok(full) => {
-                for s in split.finish() {
-                    let s = speakable(&s);
-                    if !s.is_empty() {
-                        self.speak(&s);
-                        spoke = false;
+                let streamed = skip == Some(false);
+                skipped = skip == Some(true) || (skip.is_none() && skip_prefix(&full) == Some(true));
+                if !skipped {
+                    // 串流時沒判斷出來（例如完全沒有增量），改用完整結果
+                    let mut rest = if streamed { vec![] } else { split.push(&full) };
+                    rest.extend(split.finish());
+                    for s in rest {
+                        let s = speakable(&s);
+                        if !s.is_empty() {
+                            self.speak(&s);
+                            spoke = false;
+                        }
                     }
+                    if spoke {
+                        self.after_speaking();
+                    }
+                    d.history.push(text, &full);
+                    d.skips = 0;
+                } else {
+                    d.skips += 1;
                 }
-                if spoke {
-                    self.after_speaking();
-                }
-                d.history.push(text, &full);
+                self.log.log("advise_turn", json!({"latency_ms": t0.elapsed().as_millis() as u64, "skip": skipped}));
                 self.discussion = Some(d);
-                self.log.log("advise_turn", json!({"latency_ms": t0.elapsed().as_millis() as u64}));
             }
             Err(e) => {
                 if spoke {
@@ -775,6 +806,9 @@ impl<P: Platform> Engine<P> {
                 self.discussion = Some(d);
                 self.speak(&e.to_string());
             }
+        }
+        if skipped && self.discussion.as_ref().is_some_and(|d| d.skips >= MAX_SKIPS) {
+            return self.end_advising(EndReason::Skips);
         }
         self.open_window(State::Advising);
     }

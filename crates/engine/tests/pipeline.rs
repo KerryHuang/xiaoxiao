@@ -1417,3 +1417,22 @@ fn advising_logs_events_without_text() {
     assert!(log.lines().any(|l| l.contains(r#""ev":"advise_turn""#) && l.contains("latency_ms")), "{log}");
     assert!(!log.contains("新功能") && !log.contains("先做登入"), "不記內容：{log}");
 }
+
+#[test]
+fn three_skips_in_a_row_end_advising() {
+    let r = discuss("advise", timing(), &["我們來討論", "電視：今天天氣晴", "電視：明天下雨", "新功能怎麼排", "電視一", "電視二", "電視三"]);
+    r.wait("連續三次後問存檔", |w, _| w.said.last().is_some_and(|x| x == "要存重點嗎"));
+    assert_eq!(r.said(), ["我在", "好，你說", REPLY, "我們談了新功能排程。", "要存重點嗎"]);
+    assert!(!r.said().iter().any(|s| s.contains('<') || s.contains("SK")), "{:?}", r.said());
+    let m = advisor_msgs(&r);
+    assert_eq!(m.len(), 7, "中間有正常回應要歸零，所以六句都送出才結束：{m:?}");
+    assert!(m[6].contains("[整理重點]"));
+}
+
+#[test]
+fn three_skips_with_nothing_discussed_end_quietly() {
+    let r = discuss("advise", timing(), &["我們來討論", "電視一", "電視二", "電視三"]);
+    r.wait("三句都送出", |_, _| advisor_msgs(&r).len() == 3);
+    r.wait("安靜回待命", |_, s| s == State::Idle);
+    assert_eq!(r.said(), ["我在", "好，你說"]);
+}

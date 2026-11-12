@@ -338,7 +338,7 @@ impl<P: Platform> Engine<P> {
         match self.p.audio().read_block() {
             Ok(b) => {
                 let g = self.agc.process(&b);
-                self.speech = self.vad.push(&b, self.agc.gain());
+                self.speech = self.vad.push(&b);
                 self.ring.push(&g);
                 Some(g)
             }
@@ -527,7 +527,7 @@ impl<P: Platform> Engine<P> {
         let mut out: Vec<Gained> = vec![];
         for b in blocks {
             let g = self.agc.process(&b);
-            let speech = self.vad.push(&b, self.agc.gain());
+            let speech = self.vad.push(&b);
             if speech || !out.is_empty() {
                 out.push((g, speech));
             }

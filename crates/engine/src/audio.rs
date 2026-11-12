@@ -9,7 +9,7 @@ pub const BLOCK: usize = 1600;
 const AGC_WINDOW: usize = 50;
 const AGC_TARGET: f32 = 0.3;
 const AGC_MAX: f32 = 30.0;
-/// 增益後 RMS 超過這個值算有人講話。
+/// 增益拉滿（AGC_MAX）後 RMS 超過這個值算有人講話。
 pub const SPEECH_RMS: f32 = 0.02;
 const PAUSE_BLOCKS: usize = 8;
 const MAX_BLOCKS: usize = 100;
@@ -67,7 +67,8 @@ impl Agc {
     }
 }
 
-/// 判斷一塊是不是有人在講話：增益後超過 SPEECH_RMS，而且比雜訊底高約 10 dB。
+/// 判斷一塊是不是有人在講話：原始 RMS 夠大（相當於增益拉滿時超過 SPEECH_RMS），而且比雜訊底高約 10 dB。
+/// 絕對門檻不隨目前增益走：增益會被剛才的大聲（例如喚醒詞）壓低，小聲說話就永遠過不了門檻。
 /// 雜訊底取增益前最近 5 秒區塊 RMS 的第 20 百分位——增益跳動時不會跟著變，
 /// 所以 AGC 把環境音拉大也不會被當成說話。
 #[derive(Default)]
@@ -80,9 +81,9 @@ const FLOOR_FACTOR: f32 = 3.0;
 pub const FLOOR_WARMUP: usize = 5;
 
 impl SpeechDetector {
-    pub fn push(&mut self, raw: &[f32], gain: f32) -> bool {
+    pub fn push(&mut self, raw: &[f32]) -> bool {
         let r = rms(raw);
-        let speech = self.win.len() >= FLOOR_WARMUP && r * gain > SPEECH_RMS && r > self.floor() * FLOOR_FACTOR;
+        let speech = self.win.len() >= FLOOR_WARMUP && r * AGC_MAX > SPEECH_RMS && r > self.floor() * FLOOR_FACTOR;
         if self.win.len() == AGC_WINDOW {
             self.win.pop_front();
         }
@@ -239,9 +240,32 @@ mod tests {
     fn speech_after_gain_drop_still_counts() {
         let mut d = SpeechDetector::default();
         for _ in 0..FLOOR_WARMUP {
-            d.push(&sine(0.0015, BLOCK), 1.0);
+            d.push(&sine(0.0015, BLOCK));
         }
-        assert!(d.push(&sine(0.04, BLOCK), 1.0), "RMS 0.028，是雜訊底的 25 倍");
+        assert!(d.push(&sine(0.04, BLOCK)), "RMS 0.028，是雜訊底的 25 倍");
+    }
+
+    /// 喊完喚醒詞（正常音量，把增益壓低）後小聲問問題：原本要求「增益後」RMS 超過 0.02，
+    /// 增益被剛才的喚醒詞壓住時，比雜訊底高很多的小聲說話也被當成沒講話，6 秒後默默回待命。
+    #[test]
+    fn quiet_question_after_a_normal_volume_wake_word_counts() {
+        let (mut a, mut d) = (Agc::default(), SpeechDetector::default());
+        let mut seed = 1;
+        let mut feed = |b: Vec<f32>| {
+            a.process(&b);
+            d.push(&b)
+        };
+        for _ in 0..10 {
+            feed(noise(0.001, BLOCK, &mut seed));
+        }
+        for _ in 0..8 {
+            feed(sine(0.3, BLOCK)); // 平常音量的「嘿，小小」
+        }
+        for _ in 0..8 {
+            feed(noise(0.001, BLOCK, &mut seed));
+        }
+        // 小聲問題：RMS 約 0.004，是雜訊底（0.0006）的 6 倍
+        assert!(feed(sine(0.0057, BLOCK)), "增益被喚醒詞壓到 1 倍時小聲說話沒被偵測到");
     }
 
     #[test]
@@ -315,7 +339,7 @@ mod tests {
         for _ in 0..100 {
             let b = noise(0.004, BLOCK, &mut seed);
             a.process(&b);
-            if d.push(&b, a.gain()) {
+            if d.push(&b) {
                 hits += 1;
             }
         }
@@ -330,11 +354,11 @@ mod tests {
         for _ in 0..60 {
             let b = noise(0.004, BLOCK, &mut seed);
             a.process(&b);
-            d.push(&b, a.gain());
+            d.push(&b);
         }
         let b = sine(0.05, BLOCK);
         a.process(&b);
-        assert!(d.push(&b, a.gain()));
+        assert!(d.push(&b));
     }
 
     #[test]

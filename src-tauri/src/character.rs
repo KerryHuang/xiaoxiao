@@ -255,6 +255,14 @@ mod tests {
     }
 
     #[test]
+    fn advising_shows_its_own_hint() {
+        let got = v(Status::Engine(State::Advising), None);
+        assert_eq!(got.look, Look::Think);
+        assert_eq!(got.hint, status_text(State::Advising));
+        assert!(got.hint.contains("先這樣"), "{}", got.hint);
+    }
+
+    #[test]
     fn engine_failure_forgets_old_call_pause() {
         let mut g = Inner { pause: Some(PauseReason::Call), ..Default::default() };
         g.fail("無法啟動");

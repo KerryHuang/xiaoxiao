@@ -16,6 +16,8 @@ pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(45);
 /// 快答等第一段文字的上限、整個回答的上限；超過就砍掉程序回 Timeout，引擎不會卡住。
 pub const FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(8);
 pub const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
+/// 顧問回答三到五句，整個回答上限比快答寬。
+pub const ADVISE_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// 查資料讀本機檔案時一律排除。
 const SECRET_PATTERNS: &[&str] = &[

@@ -48,7 +48,7 @@ pub fn look_for(s: State) -> Look {
     match s {
         State::Idle | State::NoMic | State::Degraded => Look::Idle,
         State::Acking | State::Listening | State::FollowUp | State::Confirming => Look::Listen,
-        State::Thinking => Look::Think,
+        State::Thinking | State::Advising => Look::Think,
         State::Speaking => Look::Speak,
         State::Paused => Look::Pause,
     }
@@ -111,6 +111,7 @@ mod tests {
             assert_eq!(look_for(s), Look::Listen);
         }
         assert_eq!(look_for(State::Thinking), Look::Think);
+        assert_eq!(look_for(State::Advising), Look::Think, "顧問窗口跟一般追問要看得出不同");
         assert_eq!(look_for(State::Speaking), Look::Speak);
         assert_eq!(look_for(State::Paused), Look::Pause);
         for s in [State::NoMic, State::Degraded] {

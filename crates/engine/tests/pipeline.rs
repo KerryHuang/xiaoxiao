@@ -275,6 +275,9 @@ fn timing() -> Timing {
         lookup_timeout: Duration::from_secs(5),
         quick_first_token: Duration::from_secs(5),
         quick_total: Duration::from_secs(10),
+        advise_blocks: 40,
+        advise_first_token: Duration::from_secs(5),
+        advise_total: Duration::from_secs(10),
         poll: Duration::from_millis(5),
         auto_rest: Duration::from_secs(3600),
     }
@@ -363,6 +366,34 @@ fn utterance() -> Vec<Item> {
     let mut v = n(Kind::Speech, 5);
     v.extend(n(Kind::Silence, 10));
     v
+}
+
+/// fake 顧問回覆去掉 `**` 之後的樣子。
+const REPLY: &str = "這個想法不錯，你覺得先做哪個？";
+
+/// 顧問模式 1.5 秒才算講完：講 5 塊＋停 20 塊。
+fn advising_utterance() -> Vec<Item> {
+    let mut v = n(Kind::Speech, 5);
+    v.extend(n(Kind::Silence, 20));
+    v
+}
+
+/// 喚醒後依序講 texts：第一句走一般問答，之後每句一段顧問用的停頓。
+fn discuss(mode: &str, t: Timing, texts: &[&str]) -> Rig {
+    let texts: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
+    rig_full(tempfile::tempdir().unwrap(), mode, t, |_| {}, move |w| {
+        w.script.extend(wake_and_ask());
+        for _ in 1..texts.len() {
+            w.script.extend(advising_utterance());
+        }
+        w.small.push_back("嘿小小".into());
+        w.turbo.extend(texts);
+    })
+}
+
+/// 顧問程序收到的每一行訊息。
+fn advisor_msgs(r: &Rig) -> Vec<String> {
+    fs::read_to_string(r.dir.path().join("claude-args.txt")).map(|s| s.lines().map(String::from).collect()).unwrap_or_default()
 }
 
 #[test]
@@ -1186,4 +1217,122 @@ fn stream_dead_reopens_without_waiting_for_check() {
         w.turbo.push_back("一公斤幾公克".into());
     });
     r.wait("立刻重開照常喚醒", |w, _| w.said.len() == 2);
+}
+
+// ---------- 顧問模式 ----------
+
+#[test]
+fn entering_phrase_starts_advising() {
+    let r = discuss("advise", timing(), &["我們來討論"]);
+    let spawns = r.dir.path().join("claude-args.spawns");
+    // 程序啟動要幾十毫秒，fake 才寫得出紀錄；一起等，免得搶在它前面讀
+    r.wait("進入顧問模式", |w, s| w.said == ["我在", "好，你說"] && s == State::Advising && spawns.exists());
+    assert_eq!(fs::read_to_string(&spawns).unwrap(), "spawn sonnet\n", "進入時就開好 sonnet");
+}
+
+#[test]
+fn entering_phrase_with_content_is_the_first_turn() {
+    let r = discuss("advise", timing(), &["我們來討論一下新功能怎麼排"]);
+    r.wait("直接回第一輪", |w, s| w.said.len() == 2 && s == State::Advising);
+    assert_eq!(r.said(), ["我在", REPLY], "有後半句就不說「好，你說」，回覆不能有 **");
+    let m = advisor_msgs(&r);
+    assert_eq!(m.len(), 1);
+    assert!(m[0].contains("新功能怎麼排") && m[0].contains("現在時間") && !m[0].contains("我們來討論"), "{m:?}");
+}
+
+#[test]
+fn advising_needs_no_name_and_keeps_it() {
+    let r = discuss("advise", timing(), &["我們來討論", "那匯出呢", "小小，登入呢"]);
+    r.wait("兩輪都回答", |w, _| w.said.len() == 4);
+    let m = advisor_msgs(&r);
+    assert!(m[0].contains("那匯出呢") && m[1].contains("小小，登入呢"), "整句送出、不去掉名字：{m:?}");
+    assert!(!r.said().iter().any(|s| s == "要先叫我小小"));
+}
+
+#[test]
+fn advising_has_no_turn_limit() {
+    let r = discuss("advise", timing(), &["我們來討論", "一", "二", "三", "四", "五"]);
+    r.wait("五輪都回答", |w, _| w.said.len() == 7);
+    assert_eq!(advisor_msgs(&r).len(), 5, "不受追問 3 輪限制");
+}
+
+#[test]
+fn advising_window_uses_its_own_length() {
+    let t = Timing { followup_blocks: 30, advise_blocks: 80, ..timing() };
+    let r = rig_full(tempfile::tempdir().unwrap(), "advise", t, |_| {}, |w| {
+        w.script.extend(wake_and_ask());
+        w.script.extend(n(Kind::Silence, 50)); // 超過一般窗口、還在顧問窗口內
+        w.script.extend(advising_utterance());
+        w.small.push_back("嘿小小".into());
+        w.turbo.extend(["我們來討論".to_string(), "那匯出呢".to_string()]);
+    });
+    r.wait("停 5 秒後開口還會回答", |w, _| w.said.len() == 3);
+    assert_eq!(r.said()[2], REPLY);
+}
+
+#[test]
+fn advising_waits_longer_before_cutting() {
+    let r = rig("advise", |w| {
+        w.script.extend(wake_and_ask());
+        w.script.extend(n(Kind::Speech, 5));
+        w.script.extend(n(Kind::Silence, 10)); // 停 1 秒：一般問答會切，顧問模式不切
+        w.script.extend(n(Kind::Speech, 5));
+        w.script.extend(n(Kind::Silence, 20));
+        // 12 秒的一句話。固定音量連講超過約 4 秒會被 SpeechDetector 當成雜訊底，所以每 3 塊夾 1 塊靜音（像字間空隙）
+        for _ in 0..30 {
+            w.script.extend(n(Kind::Speech, 3));
+            w.script.extend(n(Kind::Silence, 1));
+        }
+        w.script.extend(n(Kind::Silence, 20));
+        w.small.push_back("嘿小小".into());
+        w.turbo.extend(["我們來討論", "第一句", "第二句", "不該出現"].map(String::from));
+    });
+    r.wait("兩句都回答", |w, _| w.said.len() == 4);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(advisor_msgs(&r).len(), 2, "停頓 1 秒或講 12 秒都不能被切成兩句");
+    assert_eq!(r.w.lock().unwrap().turbo.len(), 1);
+}
+
+#[test]
+fn junk_in_advising_reopens_the_window() {
+    let r = discuss("advise", timing(), &["我們來討論", "謝謝觀看", "那匯出呢"]);
+    r.wait("幻覺字串後還能接著討論", |w, s| w.said.len() == 3 && s == State::Advising);
+    let m = advisor_msgs(&r);
+    assert_eq!(m.len(), 1, "{m:?}");
+    assert!(m[0].contains("那匯出呢"));
+}
+
+#[test]
+fn advising_sends_commands_and_reminders_to_sonnet() {
+    let r = discuss("advise", timing(), &["我們來討論", "提醒我三點開會", "現在幾點"]);
+    r.wait("兩句都交給 sonnet", |w, _| w.said.len() == 4);
+    assert_eq!(r.said(), ["我在", "好，你說", REPLY, REPLY]);
+    assert_eq!(advisor_msgs(&r).len(), 2);
+    assert!(!r.dir.path().join("reminders.json").exists(), "顧問模式不做事");
+}
+
+#[test]
+fn advisor_model_comes_from_settings() {
+    let r = rig_full(tempfile::tempdir().unwrap(), "advise", Timing { advise_blocks: 400, ..timing() }, |s| s.advisor_model = "opus".into(), |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("我們來討論".into());
+    });
+    let spawns = r.dir.path().join("claude-args.spawns");
+    r.wait("開了顧問程序", |_, _| spawns.exists());
+    assert_eq!(fs::read_to_string(&spawns).unwrap(), "spawn opus\n");
+}
+
+#[test]
+fn entering_phrase_beats_weather() {
+    let r = rig_full(tempfile::tempdir().unwrap(), "advise", timing(), |s| s.location = "台北".into(), |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("我們來討論一下明天天氣".into());
+        w.http.push_back(Ok(WEATHER.into()));
+    });
+    r.wait("進入顧問模式並回答", |w, s| w.said.len() == 2 && s == State::Advising);
+    assert!(r.w.lock().unwrap().urls.is_empty(), "不該打天氣 API");
+    assert_eq!(fs::read_to_string(r.dir.path().join("claude-args.spawns")).unwrap(), "spawn sonnet\n");
+    assert!(advisor_msgs(&r)[0].contains("明天天氣"));
 }

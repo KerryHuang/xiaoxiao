@@ -25,6 +25,8 @@ pub struct Settings {
     pub character: CharacterKind,
     /// 所在地（例如「台北」），查天氣這類跟地點有關的事要用；空字串代表沒設定。
     pub location: String,
+    /// 顧問模式用的模型，設定檔可改。
+    pub advisor_model: String,
 }
 
 /// 預設快捷鍵。Windows 鍵盤沒有 Option，寫成 Alt（兩者解析結果相同）。
@@ -46,6 +48,7 @@ impl Default for Settings {
             onboarded: false,
             character: CharacterKind::default(),
             location: String::new(),
+            advisor_model: "sonnet".into(),
         }
     }
 }
@@ -89,6 +92,12 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_without_advisor_model_use_sonnet() {
+        let s: Settings = serde_json::from_str(r#"{"onboarded":true}"#).unwrap();
+        assert_eq!(s.advisor_model, "sonnet");
+    }
 
     #[test]
     fn settings_without_character_load_as_pixel() {

@@ -48,6 +48,7 @@ pub fn status_text(s: State) -> &'static str {
         State::Speaking => "說話中",
         State::FollowUp => "可以直接追問",
         State::Confirming => "等你確認",
+        State::Advising => "討論中：直接說，說「先這樣」結束",
         State::Paused => "暫停中",
         State::NoMic => "找不到可用的麥克風",
         State::Degraded => "連不上 Claude：只能報時和計時",
@@ -57,7 +58,7 @@ pub fn status_text(s: State) -> &'static str {
 fn icon_for(s: State) -> &'static str {
     match s {
         State::Idle | State::FollowUp => "idle",
-        State::Acking | State::Listening | State::Thinking | State::Speaking | State::Confirming => "listening",
+        State::Acking | State::Listening | State::Thinking | State::Speaking | State::Confirming | State::Advising => "listening",
         State::Paused => "paused",
         State::NoMic | State::Degraded => "warning",
     }

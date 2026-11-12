@@ -149,6 +149,37 @@ fn main() {
                 result("好。");
             }
         }
+        // 顧問程序（系統提示含「陪使用者討論工作」）：記下啟動時的模型與每則訊息，依內容回覆；快答 warm 照 ok
+        "advise" => {
+            if args.iter().any(|a| a.contains("陪使用者討論工作")) {
+                let path = out.expect("advise 模式要有輸出路徑");
+                let model = args.iter().position(|a| a == "--model").and_then(|i| args.get(i + 1)).cloned().unwrap_or_default();
+                let spawns = path.with_extension("spawns");
+                let old = std::fs::read_to_string(&spawns).unwrap_or_default();
+                std::fs::write(&spawns, format!("{old}spawn {model}\n")).unwrap();
+                for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+                    let old = std::fs::read_to_string(&path).unwrap_or_default();
+                    std::fs::write(&path, format!("{old}{line}\n")).unwrap();
+                    if line.contains("[整理重點]") {
+                        result("<<SAY>>我們談了新功能排程。\\n<<TOPIC>>新功能排程\\n<<NOTES>>\\n- 先做登入\\n- 再做匯出");
+                    } else if line.contains("電視") {
+                        delta("<<SK");
+                        delta("IP>>");
+                        result("<<SKIP>>");
+                    } else {
+                        delta("**這個想法不錯**，");
+                        delta("你覺得先做哪個？");
+                        result("**這個想法不錯**，你覺得先做哪個？");
+                    }
+                }
+            } else {
+                each_line(|_| {
+                    delta("一公斤是");
+                    delta("1000 公克。");
+                    result("一公斤是1000 公克。");
+                });
+            }
+        }
         // 第一次一啟動就死掉，之後正常回答：模擬預先開好的程序在等待時死掉
         "die-once" => {
             let marker = out.expect("die-once 模式要有輸出路徑");

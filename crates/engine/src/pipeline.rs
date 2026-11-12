@@ -8,14 +8,15 @@ use chrono::{DateTime, Datelike, FixedOffset, Timelike};
 use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
-use crate::audio::{rms, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
+use crate::advisor::{Transcript, enter_advising, speakable};
+use crate::audio::{rms, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
 use crate::events::EventLog;
 use crate::local_cmd::{LocalCmd, parse_local};
 use crate::pause::{PauseReason, pause_reason};
 use crate::platform::*;
-use crate::prompts::{confirm_prompt, quick_message, quick_prompt};
+use crate::prompts::{advisor_prompt, confirm_prompt, quick_message, quick_prompt};
 use crate::router::{Route, is_action_request, route_prefix};
 use crate::sentence::{SentenceSplitter, is_junk_transcript};
 use crate::wake::{strip_call_name, verify_text};
@@ -40,6 +41,7 @@ pub enum State {
     Speaking,
     FollowUp,
     Confirming,
+    Advising,
     Paused,
     NoMic,
     Degraded,
@@ -61,6 +63,10 @@ pub struct Timing {
     /// 快答：等第一段文字最多多久、整個回答最多多久。
     pub quick_first_token: Duration,
     pub quick_total: Duration,
+    /// 顧問窗口長度（塊數）；顧問回答等第一段文字與整個回答的上限。
+    pub advise_blocks: usize,
+    pub advise_first_token: Duration,
+    pub advise_total: Duration,
     pub poll: Duration,
     /// 待命這麼久沒互動就自動休息（關麥克風）。
     pub auto_rest: Duration,
@@ -75,6 +81,9 @@ impl Default for Timing {
             lookup_timeout: crate::claude::LOOKUP_TIMEOUT,
             quick_first_token: crate::claude::FIRST_TOKEN_TIMEOUT,
             quick_total: crate::claude::ANSWER_TIMEOUT,
+            advise_blocks: 200, // 20 秒
+            advise_first_token: crate::claude::FIRST_TOKEN_TIMEOUT,
+            advise_total: crate::claude::ADVISE_TIMEOUT,
             poll: Duration::from_millis(100),
             auto_rest: Duration::from_secs(120),
         }
@@ -146,6 +155,12 @@ impl EngineHandle {
     }
 }
 
+/// 顧問討論：常駐的 sonnet 程序與逐輪紀錄。
+struct Discussion {
+    sess: Session,
+    history: Transcript,
+}
+
 struct Timer {
     at: DateTime<FixedOffset>,
 }
@@ -173,6 +188,7 @@ pub struct Engine<P: Platform> {
     window_speech: u32,
     quick: Option<Session>,
     confirm: Option<Session>,
+    discussion: Option<Discussion>,
     degraded_at: Option<Instant>,
     crashes: u32,
     timers: Vec<Timer>,
@@ -223,6 +239,7 @@ impl<P: Platform> Engine<P> {
             window_speech: 0,
             quick: None,
             confirm: None,
+            discussion: None,
             degraded_at: None,
             crashes: 0,
             timers: vec![],
@@ -257,6 +274,7 @@ impl<P: Platform> Engine<P> {
         self.ep = None;
         self.onset.clear();
         self.confirm = None;
+        self.discussion = None;
         self.set_state(if self.degraded_at.is_some() { State::Degraded } else { State::Idle });
     }
 
@@ -347,6 +365,7 @@ impl<P: Platform> Engine<P> {
                 self.p.audio().close();
                 self.ep = None;
                 self.confirm = None;
+                self.discussion = None;
                 self.open_audio();
                 None
             }
@@ -362,6 +381,7 @@ impl<P: Platform> Engine<P> {
             }
             self.ep = None;
             self.confirm = None;
+            self.discussion = None;
             self.quick = None; // 暫停期間不留著 claude 佔記憶體，下次叫醒會重開
             self.set_state(State::Paused);
         } else if !want && matches!(s, State::Paused | State::NoMic) {
@@ -441,7 +461,7 @@ impl<P: Platform> Engine<P> {
                 }
             }
             State::Listening => self.listen(&g),
-            State::FollowUp | State::Confirming => {
+            State::FollowUp | State::Confirming | State::Advising => {
                 if self.ep.is_some() {
                     self.listen(&g);
                 } else if self.speech {
@@ -451,7 +471,11 @@ impl<P: Platform> Engine<P> {
                     if self.onset.len() >= ONSET_BLOCKS + usize::from(self.onset_gap) {
                         self.onset_gap = false;
                         self.log.log("followup", json!({"gain": self.agc.gain()}));
-                        self.ep = Some(Endpointer::new());
+                        self.ep = Some(if self.state() == State::Advising {
+                            Endpointer::with_limits(ADVISE_PAUSE_BLOCKS, ADVISE_MAX_BLOCKS)
+                        } else {
+                            Endpointer::new()
+                        });
                         for b in std::mem::take(&mut self.onset) {
                             self.listen(&b);
                         }
@@ -549,6 +573,11 @@ impl<P: Platform> Engine<P> {
     }
 
     fn open_window(&mut self, s: State) {
+        if s == State::Advising {
+            self.window_left = self.timing.advise_blocks;
+        } else {
+            self.window_left = self.timing.followup_blocks;
+        }
         if s == State::FollowUp {
             if self.followups >= MAX_FOLLOWUP_WINDOWS {
                 return self.to_idle();
@@ -558,7 +587,6 @@ impl<P: Platform> Engine<P> {
         self.ep = None;
         self.onset.clear();
         self.onset_gap = false;
-        self.window_left = self.timing.followup_blocks;
         self.window_peak = 0.0;
         self.window_speech = 0;
         self.set_state(s);
@@ -577,6 +605,7 @@ impl<P: Platform> Engine<P> {
         self.ep = None;
         let confirming = self.state() == State::Confirming;
         let followup = self.state() == State::FollowUp;
+        let advising = self.state() == State::Advising;
         self.set_state(State::Thinking);
         let t0 = Instant::now();
         let text = self.p.transcriber().transcribe(&audio).unwrap_or_default();
@@ -585,7 +614,13 @@ impl<P: Platform> Engine<P> {
             json!({"latency_ms": t0.elapsed().as_millis() as u64, "gain": self.agc.gain(), "text": text}),
         );
         if text.is_empty() || is_junk_transcript(&text) {
-            self.to_idle();
+            if advising {
+                self.open_window(State::Advising);
+            } else {
+                self.to_idle();
+            }
+        } else if advising {
+            self.advise_turn(&text);
         } else if confirming {
             if parse_local(&text).is_some() {
                 self.confirm = None;
@@ -622,6 +657,9 @@ impl<P: Platform> Engine<P> {
     // ---------- 問題處理 ----------
 
     fn question(&mut self, text: &str) {
+        if let Some(rest) = enter_advising(text) {
+            return self.start_advising(rest);
+        }
         if let Some(cmd) = parse_local(text) {
             self.log.log("route", json!({"route": "local"}));
             self.local(cmd);
@@ -638,6 +676,78 @@ impl<P: Platform> Engine<P> {
             }
         }
         self.quick_answer(text);
+    }
+
+    /// 進入顧問模式：先開好 sonnet；有後半句就當第一輪，沒有就請使用者開口。
+    fn start_advising(&mut self, rest: &str) {
+        self.log.log("advise_start", json!({}));
+        let (first, total) = (self.timing.advise_first_token, self.timing.advise_total);
+        let mut sess = Session::new(self.p.claude(), &self.settings.advisor_model, advisor_prompt()).with_timeouts(first, total);
+        {
+            let _rt = self.rt.enter();
+            let _ = sess.warm();
+        }
+        self.discussion = Some(Discussion { sess, history: Transcript::default() });
+        if rest.is_empty() {
+            self.speak("好，你說");
+            self.open_window(State::Advising);
+        } else {
+            self.advise_turn(rest);
+        }
+    }
+
+    /// 顧問的一輪：整句送 sonnet，串流邊收邊唸；不走本機指令、不做事。
+    fn advise_turn(&mut self, text: &str) {
+        let Some(mut d) = self.discussion.take() else { return self.to_idle() };
+        self.set_state(State::Thinking);
+        let now = self.p.now();
+        let mut split = SentenceSplitter::default();
+        let mut spoke = false;
+        let t0 = Instant::now();
+        let r = {
+            let speaker = self.p.speaker();
+            let shared = &self.shared;
+            let log = &self.log;
+            let say = |s: &str| {
+                let s = speakable(s);
+                if !s.is_empty() {
+                    set_state_raw(shared, log, State::Speaking);
+                    let _ = speaker.say(&s);
+                }
+            };
+            self.rt.block_on(d.sess.ask(&quick_message(now, text), |delta| {
+                for s in split.push(delta) {
+                    say(&s);
+                    spoke = true;
+                }
+            }))
+        };
+        match r {
+            Ok(full) => {
+                for s in split.finish() {
+                    let s = speakable(&s);
+                    if !s.is_empty() {
+                        self.speak(&s);
+                        spoke = false;
+                    }
+                }
+                if spoke {
+                    self.after_speaking();
+                }
+                d.history.push(text, &full);
+                self.discussion = Some(d);
+                self.log.log("advise_turn", json!({"latency_ms": t0.elapsed().as_millis() as u64}));
+            }
+            Err(e) => {
+                if spoke {
+                    self.after_speaking();
+                }
+                self.log.log("claude", json!({"ok": false, "error": format!("{e:?}")}));
+                self.discussion = Some(d);
+                self.speak(&e.to_string());
+            }
+        }
+        self.open_window(State::Advising);
     }
 
     /// 台灣縣市的天氣問句直接查，不花 token。回 `false` 代表這句要交給 Claude。

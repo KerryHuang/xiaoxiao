@@ -70,7 +70,7 @@ pub fn skip_prefix(buf: &str) -> Option<bool> {
 }
 
 static LIST_MARK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:[-•・]\s*|\d+[.、)]\s*)").unwrap());
+    LazyLock::new(|| Regex::new(r"^(?:-\s+|[•・]\s*|\d+\.\s+|\d+[、)]\s*)").unwrap());
 
 /// 唸出前去掉 markdown 符號與句首的條列、編號。
 pub fn speakable(sentence: &str) -> String {
@@ -199,6 +199,23 @@ mod tests {
             ("1. 先做登入。", "先做登入。"),
             ("## 結論", "結論"),
             ("這樣比較穩。", "這樣比較穩。"),
+        ] {
+            assert_eq!(speakable(t), want, "{t}");
+        }
+    }
+
+    #[test]
+    fn numbers_and_signs_are_not_mistaken_for_list_marks() {
+        for (t, want) in [
+            ("1.5 倍就夠了", "1.5 倍就夠了"),
+            ("10.5% 的人", "10.5% 的人"),
+            ("-3 度", "-3 度"),
+            ("* 項目", "項目"),
+            ("用`foo`處理", "用foo處理"),
+            ("・先做登入", "先做登入"),
+            ("• 先做登入", "先做登入"),
+            ("1)先做登入", "先做登入"),
+            ("1、先做登入", "先做登入"),
         ] {
             assert_eq!(speakable(t), want, "{t}");
         }

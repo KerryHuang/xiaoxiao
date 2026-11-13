@@ -16,3 +16,4 @@ pub mod config;
 pub mod events;
 pub mod pause;
 pub mod pipeline;
+mod recital;

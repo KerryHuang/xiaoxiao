@@ -16,6 +16,7 @@ use crate::events::EventLog;
 use crate::local_cmd::{LocalCmd, parse_local};
 use crate::pause::{PauseReason, pause_reason};
 use crate::platform::*;
+use crate::recital::{Cut, Recital};
 use crate::prompts::{advisor_prompt, confirm_prompt, quick_message, quick_prompt, summary_request};
 use crate::router::{Route, is_action_request, route_prefix};
 use crate::sentence::{SentenceSplitter, is_junk_transcript};
@@ -121,6 +122,10 @@ struct Shared {
     resting: AtomicBool,
     /// 休息狀態剛改過，主迴圈不用等下一次定期檢查。
     recheck: AtomicBool,
+    /// 說話中被快捷鍵叫停；說話的那一端檢查並清掉。
+    stop_speech: AtomicBool,
+    /// 可跨執行緒讓喇叭停下。
+    stopper: Stopper,
     on_state: Mutex<Option<StateCb>>,
     on_pause: Mutex<Option<PauseCb>>,
 }
@@ -130,9 +135,14 @@ struct Shared {
 pub struct EngineHandle(Arc<Shared>);
 
 impl EngineHandle {
-    /// 只有待命、降級、追問窗口時有效；休息中也可以叫醒。
+    /// 說話中：立刻停下（不另外叫醒）。待命、降級、追問窗口時：叫醒；休息中也可以叫醒。
     pub fn trigger(&self, _t: Trigger) {
         let s = self.state();
+        if matches!(s, State::Speaking | State::Acking) {
+            self.0.stop_speech.store(true, Ordering::SeqCst);
+            (self.0.stopper)();
+            return;
+        }
         let resting_pause = s == State::Paused && self.0.resting.load(Ordering::SeqCst);
         if matches!(s, State::Idle | State::Degraded | State::FollowUp) || resting_pause {
             self.0.trigger.store(true, Ordering::SeqCst);
@@ -248,6 +258,7 @@ impl<P: Platform> Engine<P> {
     pub fn with_timing(p: P, settings: Settings, timing: Timing) -> Self {
         let log = EventLog::new(p.events_path(), settings.diagnostic);
         let store = ReminderStore::new(p.reminders_path());
+        let stopper = p.speaker().stopper();
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("建立 tokio runtime");
         Engine {
             p,
@@ -258,6 +269,8 @@ impl<P: Platform> Engine<P> {
                 trigger: AtomicBool::new(false),
                 resting: AtomicBool::new(false),
                 recheck: AtomicBool::new(false),
+                stop_speech: AtomicBool::new(false),
+                stopper,
                 on_state: Mutex::new(None),
                 on_pause: Mutex::new(None),
             }),
@@ -452,6 +465,7 @@ impl<P: Platform> Engine<P> {
     fn play_wake_sound(&mut self) {
         self.set_state(State::Acking);
         self.p.speaker().wake_sound();
+        self.shared.stop_speech.store(false, Ordering::SeqCst);
         self.after_speaking();
     }
 
@@ -582,6 +596,8 @@ impl<P: Platform> Engine<P> {
         self.set_state(State::Acking);
         self.p.speaker().chime();
         let _ = self.p.speaker().say("我在");
+        // 唸我在時按快捷鍵只是停聲，照舊進入聽問題；旗標不能留到下一次說話
+        self.shared.stop_speech.store(false, Ordering::SeqCst);
         self.after_speaking();
         self.ep = Some(Endpointer::new());
         self.set_state(State::Listening);
@@ -604,6 +620,7 @@ impl<P: Platform> Engine<P> {
         self.warm_quick();
         self.set_state(State::Acking);
         self.p.speaker().chime();
+        self.shared.stop_speech.store(false, Ordering::SeqCst);
         self.ring.clear();
         self.p.spotter().reset();
         self.ep = Some(Endpointer::new());
@@ -646,10 +663,27 @@ impl<P: Platform> Engine<P> {
         self.p.spotter().reset();
     }
 
-    fn speak(&mut self, text: &str) {
+    /// 唸出來；回 `true` 代表被快捷鍵停了。
+    fn speak(&mut self, text: &str) -> bool {
+        // 先清旗標再進 Speaking：之後到的 trigger 才會留下旗標；平台的 say 會吃掉更早的 stop，所以說之前也看一次
+        self.shared.stop_speech.store(false, Ordering::SeqCst);
         self.set_state(State::Speaking);
-        let _ = self.p.speaker().say(text);
+        if !self.shared.stop_speech.load(Ordering::SeqCst) {
+            let _ = self.p.speaker().say(text);
+        }
+        let stopped = self.shared.stop_speech.swap(false, Ordering::SeqCst);
         self.after_speaking();
+        if stopped {
+            self.log.log("speech_stop", json!({}));
+        }
+        stopped
+    }
+
+    /// 說話被快捷鍵停下後：叮一聲，直接聽使用者要說什麼。
+    fn listen_after_stop(&mut self) {
+        self.p.speaker().chime();
+        self.ep = Some(Endpointer::new());
+        self.set_state(State::Listening);
     }
 
     fn open_window(&mut self, s: State) {
@@ -895,8 +929,10 @@ impl<P: Platform> Engine<P> {
                 let say = speakable(&sum.say);
                 d.summary = Some(sum);
                 self.discussion = Some(d);
-                self.speak(&say);
-                self.speak("要存重點嗎");
+                // 摘要被停就不再唸問句，直接開確認窗口
+                if !self.speak(&say) {
+                    self.speak("要存重點嗎");
+                }
                 self.open_window(State::Confirming);
             }
         }
@@ -917,7 +953,7 @@ impl<P: Platform> Engine<P> {
             match r {
                 Ok(()) => self.speak("存好了"),
                 Err(e) => self.speak(&format!("筆記沒有寫進去：{e}")),
-            }
+            };
             self.to_idle();
         } else if reply == Some(false) || is_end_advising(text) {
             self.log.log("advise_save", json!({"saved": false}));
@@ -950,24 +986,27 @@ impl<P: Platform> Engine<P> {
         let r = self.p.http_get(&forecast_url(city)).and_then(|j| say_weather(city, ask.day, &j));
         self.log.log("route", json!({"route": "weather", "ok": r.is_ok(), "latency_ms": t0.elapsed().as_millis() as u64}));
         let Ok(answer) = r else { return false };
-        self.speak(&answer);
-        self.open_window(State::FollowUp);
+        if self.speak(&answer) {
+            self.listen_after_stop();
+        } else {
+            self.open_window(State::FollowUp);
+        }
         true
     }
 
     fn local(&mut self, cmd: LocalCmd) {
         let now = self.p.now();
-        match cmd {
+        let stopped = match cmd {
             LocalCmd::Time => self.speak(&say_time(now)),
             LocalCmd::Date => self.speak(&say_date(now)),
             LocalCmd::StartTimer { secs } => {
                 self.timers.push(Timer { at: now + chrono::Duration::seconds(secs as i64) });
-                self.speak(&format!("好，{}", say_duration(secs)));
+                self.speak(&format!("好，{}", say_duration(secs)))
             }
             LocalCmd::CancelTimer => {
                 let had = !self.timers.is_empty();
                 self.timers.clear();
-                self.speak(if had { "好，計時取消了" } else { "現在沒有在計時" });
+                self.speak(if had { "好，計時取消了" } else { "現在沒有在計時" })
             }
             LocalCmd::Rest => {
                 self.speak("好，我先休息，要叫我請按快捷鍵");
@@ -975,8 +1014,12 @@ impl<P: Platform> Engine<P> {
                 self.check_pause();
                 return;
             }
+        };
+        if stopped {
+            self.listen_after_stop();
+        } else {
+            self.open_window(State::FollowUp);
         }
-        self.open_window(State::FollowUp);
     }
 
     fn take_quick(&mut self) -> Session {
@@ -1009,33 +1052,39 @@ impl<P: Platform> Engine<P> {
         let mut buf = String::new();
         let mut route = None;
         let mut split = SentenceSplitter::default();
-        let mut spoke = false;
         let t0 = Instant::now();
-        let r = {
-            let speaker = self.p.speaker();
+        let (r, spoke, cut) = {
             let shared = &self.shared;
             let log = &self.log;
-            let say = |s: &str| {
-                set_state_raw(shared, log, State::Speaking);
-                let _ = speaker.say(s);
-            };
-            self.rt.block_on(sess.ask(&quick_message(now, text), |d| {
+            let on_speak = || set_state_raw(shared, log, State::Speaking);
+            let mut rec = Recital::new(&mut self.p, &mut self.agc, &mut self.vad, &shared.stop_speech, &on_speak, false);
+            let r = self.rt.block_on(sess.ask(&quick_message(now, text), |d| {
                 if route.is_none() {
                     buf.push_str(d);
                     route = route_prefix(&buf);
                     if route == Some(Route::Answer) {
                         for s in split.push(&buf) {
-                            say(&s);
-                            spoke = true;
+                            rec.sentence(&s);
                         }
                     }
                 } else if route == Some(Route::Answer) {
                     for s in split.push(d) {
-                        say(&s);
-                        spoke = true;
+                        rec.sentence(&s);
                     }
                 }
-            }))
+            }));
+            let streamed = route == Some(Route::Answer);
+            if let Ok(full) = &r {
+                // 串流時沒判斷出路線（例如完全沒有增量），改用完整結果
+                if route.or_else(|| route_prefix(full)).unwrap_or(Route::Answer) == Route::Answer {
+                    let mut rest = if streamed { vec![] } else { split.push(full) };
+                    rest.extend(split.finish());
+                    for s in rest {
+                        rec.sentence(&s);
+                    }
+                }
+            }
+            (r, !rec.spoken.is_empty(), rec.cut.take())
         };
         self.quick = Some(sess);
         let full = match r {
@@ -1049,29 +1098,32 @@ impl<P: Platform> Engine<P> {
         };
         self.crashes = 0;
         self.degraded_at = None;
-        let streamed = route == Some(Route::Answer);
         let route = route.or_else(|| route_prefix(&full)).unwrap_or(Route::Answer);
         self.log.log("route", json!({"route": format!("{route:?}"), "latency_ms": t0.elapsed().as_millis() as u64}));
         match route {
             Route::Answer => {
-                // 串流時沒判斷出路線（例如完全沒有增量），改用完整結果
-                let mut rest = if streamed { vec![] } else { split.push(&full) };
-                rest.extend(split.finish());
-                for s in rest {
-                    self.speak(&s);
-                }
                 if spoke {
                     self.after_speaking();
                 }
-                self.open_window(State::FollowUp);
+                if matches!(cut, Some(Cut::Stopped)) {
+                    self.log.log("speech_stop", json!({}));
+                    self.listen_after_stop();
+                } else {
+                    self.open_window(State::FollowUp);
+                }
             }
             Route::Lookup => {
-                self.speak("我查一下");
+                if self.speak("我查一下") {
+                    return self.listen_after_stop();
+                }
                 self.set_state(State::Thinking);
                 match self.rt.block_on(lookup(&cfg, text, self.timing.lookup_timeout)) {
                     Ok(a) => {
-                        self.speak(&a);
-                        self.open_window(State::FollowUp);
+                        if self.speak(&a) {
+                            self.listen_after_stop();
+                        } else {
+                            self.open_window(State::FollowUp);
+                        }
                     }
                     Err(e) => self.claude_failed(e),
                 }

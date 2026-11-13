@@ -56,6 +56,10 @@ struct World {
     verify_backlog: usize,
     /// 目前躺在系統緩衝、還沒被讀走的塊數（script 最前面）。
     buffered: usize,
+    /// 說到包含這段文字的話就卡住，直到被 stopper 叫停（只卡一次）。
+    hold: Option<String>,
+    stop_req: bool,
+    stops: usize,
 }
 
 type W = Arc<Mutex<World>>;
@@ -149,12 +153,34 @@ struct FakeSpeaker(W);
 impl Speaker for FakeSpeaker {
     fn say(&self, text: &str) -> Result<(), String> {
         let mut w = self.0.lock().unwrap();
+        w.stop_req = false;
         w.said.push(text.to_string());
         // 喇叭模式：自己的聲音被麥克風收到，排在最前面
         for _ in 0..3 {
             w.script.push_front(Item::Block(Kind::Echo));
         }
+        if w.hold.as_deref().is_some_and(|h| text.contains(h)) {
+            w.hold = None;
+            let t0 = Instant::now();
+            loop {
+                drop(w);
+                std::thread::sleep(Duration::from_millis(2));
+                w = self.0.lock().unwrap();
+                if std::mem::take(&mut w.stop_req) {
+                    break;
+                }
+                assert!(t0.elapsed() < Duration::from_secs(5), "卡住的 say 5 秒沒等到停止");
+            }
+        }
         Ok(())
+    }
+    fn stopper(&self) -> Stopper {
+        let w = self.0.clone();
+        Arc::new(move || {
+            let mut w = w.lock().unwrap();
+            w.stop_req = true;
+            w.stops += 1;
+        })
     }
     fn chime(&self) {
         self.0.lock().unwrap().chimes += 1;
@@ -380,6 +406,12 @@ fn advising_utterance() -> Vec<Item> {
 
 /// 喚醒後依序講 texts：第一句走一般問答，之後每句一段顧問用的停頓。
 fn discuss(mode: &str, t: Timing, texts: &[&str]) -> Rig {
+    discuss_holding(mode, t, texts, None)
+}
+
+/// 同 `discuss`，另外在引擎啟動前設好 `hold`。
+fn discuss_holding(mode: &str, t: Timing, texts: &[&str], hold: Option<&str>) -> Rig {
+    let hold = hold.map(String::from);
     let texts: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
     rig_full(tempfile::tempdir().unwrap(), mode, t, |_| {}, move |w| {
         w.script.extend(wake_and_ask());
@@ -388,6 +420,7 @@ fn discuss(mode: &str, t: Timing, texts: &[&str]) -> Rig {
         }
         w.small.push_back("嘿小小".into());
         w.turbo.extend(texts);
+        w.hold = hold;
     })
 }
 
@@ -1531,4 +1564,63 @@ fn pause_ends_advising_without_asking() {
     assert!(notes(&r).is_none());
     let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
     assert!(log.lines().any(|l| l.contains(r#""ev":"advise_end""#) && l.contains(r#""reason":"pause""#)), "{log}");
+}
+
+// ---------- 快捷鍵立刻停 ----------
+
+#[test]
+fn hotkey_while_answering_stops_and_listens() {
+    let r = rig("ok", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.extend(["一公斤幾公克".to_string(), "那一公克呢".to_string()]);
+        w.hold = Some("一公斤是".into());
+    });
+    r.wait("正在唸回答", |w, s| s == State::Speaking && w.said.len() == 2);
+    r.push(utterance()); // 停下後不叫名字直接問
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("第二題也回答", |w, _| w.said.len() == 3);
+    let w = r.w.lock().unwrap();
+    assert_eq!(w.said.iter().filter(|s| *s == "我在").count(), 1, "停下不能再唸我在：{:?}", w.said);
+    assert_eq!(w.chimes, 2, "喚醒一聲、停下改聽一聲");
+    assert_eq!(w.stops, 1);
+}
+
+#[test]
+fn stopping_lookup_notice_cancels_the_lookup() {
+    // 「我查一下」被停：不查、直接改聽
+    let r = rig("lookup-sources", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("今天天氣如何".into());
+        w.hold = Some("我查一下".into());
+    });
+    r.wait("唸我查一下", |w, s| s == State::Speaking && w.said.last().is_some_and(|x| x == "我查一下"));
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("改聽後沒講話回待命", |_, s| s == State::Idle);
+    assert!(!r.said().iter().any(|s| s.contains("今天有雨")), "{:?}", r.said());
+    assert_eq!(r.w.lock().unwrap().chimes, 2);
+}
+
+#[test]
+fn stopping_summary_goes_straight_to_save_prompt() {
+    let r = discuss_holding("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣", "對"], Some("我們談了"));
+    r.wait("唸摘要", |w, s| s == State::Speaking && w.said.last().is_some_and(|x| x.starts_with("我們談了")));
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("存好", |w, _| w.said.last().is_some_and(|x| x == "存好了"));
+    assert!(!r.said().iter().any(|s| s == "要存重點嗎"), "{:?}", r.said());
+}
+
+#[test]
+fn stale_stop_does_not_cut_next_speech() {
+    // 說完才按到：狀態已不是 Speaking，旗標不能留到下一次說話
+    let r = rig("ok", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+    });
+    r.wait("回答完", |w, s| w.said.len() == 2 && s == State::Idle);
+    r.h.trigger(Trigger::Hotkey); // 待命時按：照舊是叫醒
+    r.wait("說我在", |w, _| w.said.len() == 3 && w.said[2] == "我在");
+    assert_eq!(r.w.lock().unwrap().stops, 0);
 }

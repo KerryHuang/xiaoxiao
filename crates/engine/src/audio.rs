@@ -74,12 +74,17 @@ impl Agc {
 /// 絕對門檻不隨目前增益走：增益會被剛才的大聲（例如喚醒詞）壓低，小聲說話就永遠過不了門檻。
 /// 雜訊底取增益前最近 5 秒區塊 RMS 的第 20 百分位——增益跳動時不會跟著變，
 /// 所以 AGC 把環境音拉大也不會被當成說話。
+/// 說話的塊不算進雜訊底，不然連講 4 秒就把底撐高、後面的字被切掉；
+/// 但連續超過 `ADAPT_AFTER` 塊都是「說話」就當成環境變吵，照常更新。
 #[derive(Default)]
 pub struct SpeechDetector {
     win: VecDeque<f32>,
+    run: usize,
 }
 
 const FLOOR_FACTOR: f32 = 3.0;
+/// 連續這麼多塊（10 秒）都判成說話，就讓雜訊底跟上。
+const ADAPT_AFTER: usize = 100;
 /// 剛開麥克風時，先累積這麼多塊（0.5 秒）估雜訊底，期間一律當沒講話。
 pub const FLOOR_WARMUP: usize = 5;
 
@@ -87,10 +92,13 @@ impl SpeechDetector {
     pub fn push(&mut self, raw: &[f32]) -> bool {
         let r = rms(raw);
         let speech = self.win.len() >= FLOOR_WARMUP && r * AGC_MAX > SPEECH_RMS && r > self.floor() * FLOOR_FACTOR;
-        if self.win.len() == AGC_WINDOW {
-            self.win.pop_front();
+        self.run = if speech { self.run + 1 } else { 0 };
+        if !speech || self.run > ADAPT_AFTER {
+            if self.win.len() == AGC_WINDOW {
+                self.win.pop_front();
+            }
+            self.win.push_back(r);
         }
-        self.win.push_back(r);
         speech
     }
 
@@ -385,6 +393,32 @@ mod tests {
         let b = sine(0.05, BLOCK);
         a.process(&b);
         assert!(d.push(&b));
+    }
+
+    /// 實機 11-13：連講約 4 秒後，雜訊底被說話聲撐高，後面的字都判成沒講話，長句在 5 秒處被切斷。
+    #[test]
+    fn long_speech_does_not_raise_the_floor() {
+        let mut d = SpeechDetector::default();
+        let mut seed = 1;
+        for _ in 0..60 {
+            d.push(&noise(0.002, BLOCK, &mut seed));
+        }
+        let quiet = (0..90).filter(|_| !d.push(&noise(0.05, BLOCK, &mut seed))).count();
+        assert_eq!(quiet, 0, "連講 9 秒都要算說話");
+    }
+
+    /// 環境真的變吵（開風扇）時不能永遠當成有人講話：連續超過 10 秒後雜訊底要跟上。
+    #[test]
+    fn steady_new_noise_stops_counting_as_speech() {
+        let mut d = SpeechDetector::default();
+        let mut seed = 1;
+        for _ in 0..60 {
+            d.push(&noise(0.002, BLOCK, &mut seed));
+        }
+        for _ in 0..200 {
+            d.push(&noise(0.05, BLOCK, &mut seed));
+        }
+        assert!(!d.push(&noise(0.05, BLOCK, &mut seed)), "20 秒後風扇聲應已是雜訊底");
     }
 
     #[test]

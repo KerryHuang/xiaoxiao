@@ -16,7 +16,7 @@ const MAX_BLOCKS: usize = 100;
 /// 顧問模式：停頓 1.5 秒算講完、最長 30 秒。
 pub const ADVISE_PAUSE_BLOCKS: usize = 15;
 pub const ADVISE_MAX_BLOCKS: usize = 300;
-const NO_SPEECH_BLOCKS: usize = 60;
+pub const NO_SPEECH_BLOCKS: usize = 60;
 
 /// 只保留最近 N 秒的環形緩衝（只在記憶體）。
 pub struct RingBuffer {

@@ -186,7 +186,12 @@ impl Speaker for FakeSpeaker {
         })
     }
     fn chime(&self) {
-        self.0.lock().unwrap().chimes += 1;
+        let mut w = self.0.lock().unwrap();
+        w.chimes += 1;
+        // 喇叭模式：叮聲被麥克風收到（不到三塊，不該被當成開口）
+        for _ in 0..2 {
+            w.script.push_front(Item::Block(Kind::Echo));
+        }
     }
     fn wake_sound(&self) {
         let mut w = self.0.lock().unwrap();
@@ -434,9 +439,17 @@ fn advisor_msgs(r: &Rig) -> Vec<String> {
 
 /// 進顧問模式、第一輪就拿到三句回覆；`after` 是第一句唸完後麥克風聽到的東西。
 fn long_reply(after: Vec<Item>, texts: &[&str], hold: Option<&str>, read_delay_ms: u64) -> Rig {
+    long_reply_with("advise", after, texts, hold, read_delay_ms)
+}
+
+fn long_reply_in(mode: &str, after: Vec<Item>, texts: &[&str]) -> Rig {
+    long_reply_with(mode, after, texts, None, 0)
+}
+
+fn long_reply_with(mode: &str, after: Vec<Item>, texts: &[&str], hold: Option<&str>, read_delay_ms: u64) -> Rig {
     let hold = hold.map(String::from);
     let texts: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
-    rig_full(tempfile::tempdir().unwrap(), "advise", timing(), |_| {}, move |w| {
+    rig_full(tempfile::tempdir().unwrap(), mode, timing(), |_| {}, move |w| {
         w.script.extend(wake_and_ask());
         w.script.extend(after);
         w.small.push_back("嘿小小".into());
@@ -456,7 +469,36 @@ fn barge_in_sends_the_interruption() {
     let m = advisor_msgs(&r);
     assert!(m[1].contains("等一下，我想先講登入") && m[1].contains("只唸到") && m[1].contains("第一句。") && !m[1].contains("第二句"), "{m:?}");
     let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
-    assert!(log.contains(r#""ev":"barge_in""#));
+    assert!(log.lines().any(|l| l.contains(r#""ev":"barge_in""#) && l.contains(r#""peak""#) && l.contains(r#""speech_blocks""#)), "{log}");
+}
+
+#[test]
+fn skip_after_barge_does_not_count_towards_ending() {
+    // 開電視：兩個空檔都誤判成開口、都被判 SKIP（接著唸完），再加一個一般 SKIP。
+    // 插話的 SKIP 不算連續 SKIP，所以只算 1 次，不會因為 3 次而結束討論
+    let mut after = vec![];
+    for _ in 0..2 {
+        after.extend(n(Kind::Speech, 5));
+        after.extend(n(Kind::Silence, 15));
+    }
+    after.extend(advising_utterance());
+    let r = long_reply(after, &["我們來討論一下長一點", "電視一", "電視二", "電視三"], None, 0);
+    r.wait("四則都送出", |_, _| advisor_msgs(&r).len() == 4);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(r.said()[1..4], ["第一句。", "第二句。", "第三句。"]);
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(!log.contains(r#""reason":"skips""#), "不該因 SKIP 結束：{log}");
+}
+
+#[test]
+fn interrupted_reply_is_marked_in_the_recap() {
+    let mut after = n(Kind::Speech, 5);
+    after.extend(n(Kind::Silence, 20));
+    after.extend(advising_utterance());
+    let r = long_reply_in("advise-crash", after, &["我們來討論一下長一點", "等一下，我想先講登入", "那匯出呢"]);
+    r.wait("重開後回答", |w, s| w.said.len() >= 5 && s == State::Advising && advisor_msgs(&r).len() == 3);
+    let m = advisor_msgs(&r);
+    assert!(m[2].contains("前情提要") && m[2].contains("第一句。（被使用者打斷）") && !m[2].contains("第二句"), "{m:?}");
 }
 
 #[test]
@@ -473,9 +515,11 @@ fn junk_barge_in_resumes_the_rest() {
     let mut after = n(Kind::Speech, 5);
     after.extend(n(Kind::Silence, 20));
     let r = long_reply(after, &["我們來討論一下長一點", "謝謝觀看"], None, 0);
-    r.wait("接著唸完", |w, _| w.said.len() == 4);
+    r.wait("接著唸完", |w, s| w.said.len() == 4 && s == State::Advising);
     assert_eq!(r.said()[1..], ["第一句。", "第二句。", "第三句。"]);
     assert_eq!(advisor_msgs(&r).len(), 1, "垃圾字串不送 sonnet");
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.lines().any(|l| l.contains(r#""ev":"barge_resume""#) && l.contains(r#""why":"junk""#)), "{log}");
 }
 
 #[test]
@@ -484,11 +528,13 @@ fn skip_barge_in_resumes_the_rest() {
     after.extend(n(Kind::Silence, 20));
     after.extend(advising_utterance());
     let r = long_reply(after, &["我們來討論一下長一點", "電視的聲音", "那匯出呢"], None, 0);
-    r.wait("接著唸完再回答下一輪", |w, _| w.said.len() == 5);
+    r.wait("接著唸完再回答下一輪", |w, s| w.said.len() == 5 && s == State::Advising);
     assert_eq!(r.said()[1..], ["第一句。", "第二句。", "第三句。", REPLY]);
     let m = advisor_msgs(&r);
     assert!(m[1].contains("只唸到"), "SKIP 那則帶註記：{m:?}");
     assert!(!m[2].contains("只唸到"), "恢復後不再帶註記：{m:?}");
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.lines().any(|l| l.contains(r#""ev":"barge_resume""#) && l.contains(r#""why":"skip""#)), "{log}");
 }
 
 #[test]
@@ -510,6 +556,8 @@ fn hotkey_in_gap_stops_before_next_sentence() {
     r.h.trigger(Trigger::Hotkey);
     r.wait("回顧問窗口", |_, s| s == State::Advising);
     assert_eq!(r.said()[1..], ["第一句。"], "空檔裡按停，第二句不能唸");
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.contains(r#""ev":"speech_stop""#), "{log}");
 }
 
 #[test]
@@ -1695,17 +1743,38 @@ fn stopping_summary_goes_straight_to_save_prompt() {
 }
 
 #[test]
-fn stale_stop_does_not_cut_next_speech() {
-    // 說完才按到：狀態已不是 Speaking，旗標不能留到下一次說話
+fn stop_pressed_while_stream_finishes_counts_and_leaves_no_stale_flag() {
+    // 最後一句唸完、串流還沒收完（狀態仍是 Speaking）時按：算被停，改聽使用者；不能殘留旗標切掉下一題
+    let r = rig("ok-slow-end", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.extend(["一公斤幾公克".to_string(), "那一公克呢".to_string()]);
+    });
+    r.wait("最後一句唸完、串流收尾中", |w, s| s == State::Speaking && w.said.len() == 2);
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("改聽使用者", |_, s| s == State::Listening);
+    r.push(utterance());
+    r.wait("下一題完整唸出", |w, _| w.said.len() == 3);
+    assert_eq!(r.said()[2], "一公斤是1000 公克。");
+    assert_eq!(r.w.lock().unwrap().stops, 1);
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.contains(r#""ev":"speech_stop""#), "{log}");
+}
+
+#[test]
+fn silence_after_stop_goes_idle_without_asking() {
+    // 叮聲被麥克風收到（兩塊）不能當成開口；使用者沒講話就等滿原本的時間回待命，不送任何東西
     let r = rig("ok", |w| {
         w.script.extend(wake_and_ask());
         w.small.push_back("嘿小小".into());
-        w.turbo.push_back("一公斤幾公克".into());
+        w.turbo.extend(["一公斤幾公克".to_string(), "嗯".to_string()]);
+        w.hold = Some("一公斤是".into());
     });
-    r.wait("回答完", |w, s| w.said.len() == 2 && s == State::Idle);
-    r.h.trigger(Trigger::Hotkey); // 待命時按：照舊是叫醒
-    r.wait("說我在", |w, _| w.said.len() == 3 && w.said[2] == "我在");
-    assert_eq!(r.w.lock().unwrap().stops, 0);
+    r.wait("正在唸回答", |w, s| s == State::Speaking && w.said.len() == 2);
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("停下後聽", |w, s| s == State::Listening && w.chimes == 2);
+    r.wait("沒講話回待命", |_, s| s == State::Idle);
+    assert_eq!(r.w.lock().unwrap().turbo.len(), 1, "沒有任何東西送去聽寫");
 }
 
 #[test]

@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
 use crate::advisor::{INTERRUPTED, Summary, interrupt_note, Transcript, enter_advising, is_end_advising, parse_save_reply, parse_summary, skip_prefix, speakable};
-use crate::audio::{rms, Onset, OnsetStep, BLOCK, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
+use crate::audio::{rms, Onset, OnsetStep, BLOCK, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, NO_SPEECH_BLOCKS, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
 use crate::events::EventLog;
@@ -526,6 +526,21 @@ impl<P: Platform> Engine<P> {
                     self.verify_wake();
                 }
             }
+            State::Listening if self.ep.is_none() => match self.onset.push(g, self.speech) {
+                OnsetStep::Started(blocks) => {
+                    self.ep = Some(Endpointer::new());
+                    for b in blocks {
+                        self.listen(&b);
+                    }
+                }
+                OnsetStep::Pending => {}
+                OnsetStep::Quiet => {
+                    self.window_left = self.window_left.saturating_sub(1);
+                    if self.window_left == 0 {
+                        self.to_idle();
+                    }
+                }
+            },
             State::Listening => self.listen(&g),
             State::FollowUp | State::Confirming | State::Advising => {
                 if self.ep.is_some() {
@@ -692,9 +707,12 @@ impl<P: Platform> Engine<P> {
     }
 
     /// 說話被快捷鍵停下後：叮一聲，直接聽使用者要說什麼。
+    /// 叮聲與殘響可能被當成人聲，所以先過 `Onset`（連續 3 塊才算開口）才開始錄；不 flush，停下後立刻講的話才留得住。
     fn listen_after_stop(&mut self) {
         self.p.speaker().chime();
-        self.ep = Some(Endpointer::new());
+        self.ep = None;
+        self.onset.clear();
+        self.window_left = NO_SPEECH_BLOCKS;
         self.set_state(State::Listening);
     }
 
@@ -873,6 +891,7 @@ impl<P: Platform> Engine<P> {
                     }
                 }
             }
+            rec.finish();
             (r, std::mem::take(&mut rec.spoken), std::mem::take(&mut rec.unsaid), rec.cut.take())
         };
         match r {
@@ -886,7 +905,10 @@ impl<P: Platform> Engine<P> {
                         self.log.log("advise_save", json!({"saved": false}));
                         return self.to_idle();
                     }
-                    d.skips += 1;
+                    // 插話被判旁人的話只是接著唸完；不算進連續 SKIP，否則開著電視時一則回答的幾個空檔就會結束討論
+                    if held.is_none() {
+                        d.skips += 1;
+                    }
                     if d.skips >= MAX_SKIPS {
                         // 被打斷的那輪由 end_advising 補進紀錄
                         d.held = held;
@@ -946,9 +968,9 @@ impl<P: Platform> Engine<P> {
                 self.log.log("speech_stop", json!({}));
                 self.open_window(State::Advising);
             }
-            Some(Cut::Barge(blocks)) => {
+            Some(Cut::Barge(blocks, peak, voiced)) => {
                 let said = spoken.concat();
-                self.log.log("barge_in", json!({"said": spoken.len(), "left": unsaid.len()}));
+                self.log.log("barge_in", json!({"said": spoken.len(), "left": unsaid.len(), "peak": peak, "speech_blocks": voiced}));
                 d.note = Some(said);
                 d.held = Some(Held { user: user.to_string(), full, spoken, unsaid });
                 self.discussion = Some(d);
@@ -979,6 +1001,7 @@ impl<P: Platform> Engine<P> {
             for s in &unsaid {
                 rec.sentence(s);
             }
+            rec.finish();
             (std::mem::take(&mut rec.spoken), std::mem::take(&mut rec.unsaid), rec.cut.take())
         };
         spoken.extend(said);
@@ -1166,6 +1189,7 @@ impl<P: Platform> Engine<P> {
                     }
                 }
             }
+            rec.finish();
             (r, !rec.spoken.is_empty(), rec.cut.take())
         };
         self.quick = Some(sess);

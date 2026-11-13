@@ -56,6 +56,12 @@ fn main() {
             delta("好的。");
             result("一公斤是1000 公克。好的。");
         }),
+        // 句子都到了，結果卻等一秒才收尾：模擬唸完最後一句、串流還沒結束
+        "ok-slow-end" => each_line(|_| {
+            delta("一公斤是1000 公克。");
+            std::thread::sleep(Duration::from_secs(1));
+            result("一公斤是1000 公克。");
+        }),
         "garbage" => each_line(|_| {
             println!("not json");
             delta("一公斤是");
@@ -215,6 +221,11 @@ fn main() {
                     }
                     if line.contains("[整理重點]") {
                         result("<<SAY>>我們談了新功能排程。\\n<<TOPIC>>新功能排程\\n<<NOTES>>\\n- 先做登入\\n- 再做匯出");
+                    } else if line.contains("長一點") {
+                        delta("第一句。");
+                        delta("第二句。");
+                        delta("第三句。");
+                        result("第一句。第二句。第三句。");
                     } else {
                         delta("**這個想法不錯**，");
                         delta("你覺得先做哪個？");

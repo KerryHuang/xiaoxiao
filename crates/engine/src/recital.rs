@@ -1,7 +1,7 @@
 //! 一段多句的說話：逐句唸、記下唸了哪些、被快捷鍵切掉時把沒唸的收起來。
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::audio::{Agc, Onset, OnsetStep, SpeechDetector};
+use crate::audio::{rms, Agc, Onset, OnsetStep, SpeechDetector};
 use crate::pipeline::Platform;
 
 /// 句間空檔聽幾塊（0.1 秒一塊）。
@@ -11,8 +11,8 @@ pub(crate) const GAP_BLOCKS: usize = 4;
 pub(crate) enum Cut {
     /// 快捷鍵按停。
     Stopped,
-    /// 使用者開口插話；帶著已經收到的聲音區塊。
-    Barge(Vec<Vec<f32>>),
+    /// 使用者開口插話；帶著已經收到的聲音區塊，以及這段空檔的（峰值音量, 有人聲的塊數）供查回音誤判。
+    Barge(Vec<Vec<f32>>, f32, usize),
 }
 
 pub(crate) struct Recital<'a, P: Platform> {
@@ -57,17 +57,24 @@ impl<'a, P: Platform> Recital<'a, P> {
                 return;
             }
         }
-        // 平台的 say 開頭會清它自己的旗標，更早到的 stop 會被吃掉，所以先看引擎旗標
+        // 先進 Speaking 再看旗標：這之後到的快捷鍵才會留下旗標（與 speak() 一致）
+        (self.on_speak)();
         if self.stop.load(Ordering::SeqCst) {
             self.cut = Some(Cut::Stopped);
             self.unsaid.push(s.to_string());
             return;
         }
-        (self.on_speak)();
         let _ = self.p.speaker().say(s);
         self.spoken.push(s.to_string());
         self.p.audio().flush();
         if self.stop.swap(false, Ordering::SeqCst) {
+            self.cut = Some(Cut::Stopped);
+        }
+    }
+
+    /// 全部唸完後呼叫：串流收尾時才按的快捷鍵（旗標還在、沒有下一句會看它）也算被停。
+    pub fn finish(&mut self) {
+        if self.cut.is_none() && self.stop.swap(false, Ordering::SeqCst) {
             self.cut = Some(Cut::Stopped);
         }
     }
@@ -79,14 +86,16 @@ impl<'a, P: Platform> Recital<'a, P> {
             return;
         }
         let mut onset = Onset::default();
-        let mut read = 0;
+        let (mut read, mut peak, mut voiced) = (0, 0.0f32, 0);
         while read < GAP_BLOCKS || onset.pending() {
             let Ok(raw) = self.p.audio().read_block() else { break };
             read += 1;
             let g = self.agc.process(&raw);
             let speech = self.vad.push(&raw);
+            peak = peak.max(rms(&g) / self.agc.gain());
+            voiced += usize::from(speech);
             if let OnsetStep::Started(blocks) = onset.push(g, speech) {
-                self.cut = Some(Cut::Barge(blocks));
+                self.cut = Some(Cut::Barge(blocks, peak, voiced));
                 return;
             }
         }

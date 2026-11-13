@@ -54,7 +54,7 @@ fn path_claude_wins_over_desktop() {
 #[test]
 fn session_args_lock_down() {
     let a = session_args("haiku", "SP");
-    for w in [["--model", "haiku"], ["--tools", ""], ["--setting-sources", "user"], ["--permission-mode", "dontAsk"], ["--system-prompt", "SP"]] {
+    for w in [["--model", "haiku"], ["--tools", ""], ["--setting-sources", "user"], ["--permission-mode", "dontAsk"], ["--settings", r#"{"disableAllHooks":true}"#], ["--system-prompt", "SP"]] {
         assert!(a.windows(2).any(|x| x == w), "{w:?}");
     }
     assert!(a.iter().any(|x| x == "--strict-mcp-config"));
@@ -66,6 +66,7 @@ fn lookup_args_no_dirs_web_only() {
     assert!(a.windows(2).any(|w| w == ["--tools", "WebSearch"]));
     assert!(a.windows(2).any(|w| w == ["--model", "sonnet"]));
     assert!(!a.iter().any(|x| x == "--add-dir"));
+    assert!(a.windows(2).any(|w| w == ["--settings", r#"{"disableAllHooks":true}"#]), "使用者的 hook 不在小小裡跑");
 }
 
 fn system_prompt(a: &[String]) -> String {

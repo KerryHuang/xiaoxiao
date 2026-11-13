@@ -41,7 +41,9 @@ const SECRET_PATTERNS: &[&str] = &[
     "AppData/Roaming/Microsoft/Protect/**",
 ];
 
-const LOCKDOWN: [&str; 4] = ["--setting-sources", "user", "--permission-mode", "dontAsk"];
+/// 使用者的 hook 不在小小裡跑：每開一次程序多約 1.1 秒（實測 11-13），問題文字也不該流進別的工具。
+const LOCKDOWN: [&str; 6] =
+    ["--setting-sources", "user", "--permission-mode", "dontAsk", "--settings", r#"{"disableAllHooks":true}"#];
 
 #[derive(Debug, Clone)]
 pub struct ClaudeCfg {

@@ -9,4 +9,6 @@
 - 查 Mac 剛睡醒麥克風卡住：無法重現；下次發生時保留 events.jsonl，疑似開麥克風時無逾時而卡住（2026-11-12）
 - 在 Windows 驗連著講、小聲、斷網與顧問模式：msi 的建置環境已刪，要重建（2026-11-12）
 - 記錄正式語音驗收數字：`docs/voice-acceptance.md` V1～V3 與兩份勾選清單沒逐項記（2026-11-11）
+- 實測插話打斷：Mac 顧問模式句間空檔插話接得上、背景小雜音不切斷、快捷鍵立停；外接／藍牙喇叭回音是否誤判插話（看 events.jsonl 的 `barge_in` 的 peak／speech_blocks）（feat/barge-in，2026-11-13）
+- 在 Windows 驗插話打斷：分支尚未過 windows-ci；SAPI 停止說話（`say_stops_from_another_thread` ignored 測試）與空檔插話都未實機驗（feat/barge-in，2026-11-13）
 - 清 4 條 clippy 既有警告：main 上就有，CI 沒跑 clippy（2026-11-12）

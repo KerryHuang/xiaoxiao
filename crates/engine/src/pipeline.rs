@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
 use crate::advisor::{Summary, Transcript, enter_advising, is_end_advising, parse_save_reply, parse_summary, skip_prefix, speakable};
-use crate::audio::{rms, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
+use crate::audio::{rms, BLOCK, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
 use crate::events::EventLog;
@@ -565,7 +565,11 @@ impl<P: Platform> Engine<P> {
             "wake",
             json!({"ok": ok, "latency_ms": t0.elapsed().as_millis() as u64, "gain": self.agc.gain(), "text": text}),
         );
-        if ok {
+        // 喚醒詞觸發得晚時，連著講的問題已經在複核錄音裡；名字後面有話就直接接著聽，不唸「我在」
+        let continued = strip_call_name(&text).is_some_and(|r| r.chars().filter(|c| c.is_alphanumeric()).count() >= 2);
+        if ok && continued {
+            self.ack_continued();
+        } else if ok {
             self.ack();
         } else {
             self.p.spotter().reset();
@@ -591,6 +595,37 @@ impl<P: Platform> Engine<P> {
             }
             self.speech = speech;
             self.listen(&g);
+        }
+    }
+
+    /// 連著講：只叮一聲，把複核錄音和緩衝裡的聲音當成問題的開頭，繼續聽到講完。
+    /// 不 flush，叮的時候還在講的字也留著；整段交給主模型重轉，`listen` 會去掉名字。
+    fn ack_continued(&mut self) {
+        self.followups = 0;
+        self.name_hinted = false;
+        let pre = self.ring.snapshot();
+        let early = self.p.audio().take_buffered();
+        self.warm_quick();
+        self.set_state(State::Acking);
+        self.p.speaker().chime();
+        self.ring.clear();
+        self.p.spotter().reset();
+        self.ep = Some(Endpointer::new());
+        self.set_state(State::Listening);
+        for g in pre.chunks(BLOCK) {
+            self.listen_block(g, true);
+        }
+        for b in early {
+            let g = self.agc.process(&b);
+            let speech = self.vad.push(&b);
+            self.listen_block(&g, speech);
+        }
+    }
+
+    fn listen_block(&mut self, g: &[f32], speech: bool) {
+        if self.state() == State::Listening {
+            self.speech = speech;
+            self.listen(g);
         }
     }
 

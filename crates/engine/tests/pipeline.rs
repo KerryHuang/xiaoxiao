@@ -424,6 +424,22 @@ fn speech_during_wake_verify_is_not_lost() {
     assert_eq!(r.said(), ["我在", "一公斤是1000 公克。"]);
 }
 
+/// 實機 11-13：喚醒詞觸發得晚，「嘿小小一公斤幾公克」整句都已在複核錄音裡。
+/// 名字後面有話就叮一聲，用主模型重轉那段錄音直接回答，不唸「我在」、不重新聽。
+#[test]
+fn question_inside_wake_audio_is_answered_directly() {
+    let r = rig("ok", |w| {
+        w.script.extend(n(Kind::Silence, 3));
+        w.script.extend(n(Kind::Wake, 1));
+        w.script.extend(n(Kind::Silence, 30));
+        w.small.push_back("黑,小小,一公斤幾公克。".into());
+        w.turbo.push_back("嘿小小一公斤幾公克".into());
+    });
+    r.wait("回答完回待命", |w, s| !w.said.is_empty() && s == State::Idle);
+    assert_eq!(r.said(), ["一公斤是1000 公克。"]);
+    assert_eq!(r.w.lock().unwrap().chimes, 1, "連著講也要叮一聲表示聽到了");
+}
+
 #[test]
 fn wake_starts_claude_before_the_question() {
     let r = rig("args", |w| {

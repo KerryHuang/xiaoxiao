@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
 use crate::advisor::{Summary, Transcript, enter_advising, is_end_advising, parse_save_reply, parse_summary, skip_prefix, speakable};
-use crate::audio::{rms, BLOCK, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
+use crate::audio::{rms, Onset, OnsetStep, BLOCK, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
 use crate::events::EventLog;
@@ -28,7 +28,6 @@ const TAIL_BLOCKS: usize = 4;
 /// 複核用的錄音長度：命中前 3.5 秒＋命中後 0.4 秒。
 const VERIFY_SECS: f32 = 3.9;
 /// 追問窗口內要連續這麼多塊（0.3 秒）有人講話才算開口。
-const ONSET_BLOCKS: usize = 3;
 /// 不喊喚醒詞最多連開幾次追問窗口；之後要重新喊「嘿，小小」。
 const MAX_FOLLOWUP_WINDOWS: u32 = 3;
 /// 顧問模式連續幾次判斷是旁人的話（SKIP）就結束。
@@ -219,12 +218,11 @@ pub struct Engine<P: Platform> {
     vad: SpeechDetector,
     /// 最近讀到的那一塊有沒有人講話。
     speech: bool,
-    onset: Vec<Vec<f32>>,
+    onset: Onset,
     followups: u32,
     name_hinted: bool,
     ring: RingBuffer,
     ep: Option<Endpointer>,
-    onset_gap: bool,
     window_left: usize,
     window_peak: f32,
     window_speech: u32,
@@ -270,12 +268,11 @@ impl<P: Platform> Engine<P> {
             agc: Agc::default(),
             vad: SpeechDetector::default(),
             speech: false,
-            onset: vec![],
+            onset: Onset::default(),
             followups: 0,
             name_hinted: false,
             ring: RingBuffer::new(VERIFY_SECS),
             ep: None,
-            onset_gap: false,
             window_left: 0,
             window_peak: 0.0,
             window_speech: 0,
@@ -508,44 +505,42 @@ impl<P: Platform> Engine<P> {
             State::FollowUp | State::Confirming | State::Advising => {
                 if self.ep.is_some() {
                     self.listen(&g);
-                } else if self.speech {
-                    self.window_speech += 1;
-                    // 窗口內開口：不用喚醒詞，但要連續講 0.3 秒才算，避免一聲雜音就觸發
-                    self.onset.push(g);
-                    if self.onset.len() >= ONSET_BLOCKS + usize::from(self.onset_gap) {
-                        self.onset_gap = false;
-                        self.log.log("followup", json!({"gain": self.agc.gain()}));
-                        self.ep = Some(if self.state() == State::Advising {
-                            Endpointer::with_limits(ADVISE_PAUSE_BLOCKS, ADVISE_MAX_BLOCKS)
-                        } else {
-                            Endpointer::new()
-                        });
-                        for b in std::mem::take(&mut self.onset) {
-                            self.listen(&b);
-                        }
-                    }
-                } else if !self.onset.is_empty() && !self.onset_gap {
-                    // 字與字之間的小空隙不算講完
-                    self.onset_gap = true;
-                    self.onset.push(g);
                 } else {
-                    self.window_peak = self.window_peak.max(rms(&g) / self.agc.gain());
-                    self.onset.clear();
-                    self.onset_gap = false;
-                    self.window_left = self.window_left.saturating_sub(1);
-                    if self.window_left == 0 {
-                        // 只記音量，用來分辨「沒人說話」和「有說話但沒偵測到」
-                        self.log.log(
-                            "window_timeout",
-                            json!({"peak": self.window_peak, "floor": self.vad.floor(), "speech_blocks": self.window_speech}),
-                        );
-                        if self.state() == State::Advising {
-                            self.end_advising(EndReason::Silence);
-                        } else {
-                            if self.state() == State::Confirming && self.discussion.is_some() {
-                                self.log.log("advise_save", json!({"saved": false}));
+                    if self.speech {
+                        self.window_speech += 1;
+                    }
+                    let level = rms(&g) / self.agc.gain();
+                    match self.onset.push(g, self.speech) {
+                        OnsetStep::Started(blocks) => {
+                            self.log.log("followup", json!({"gain": self.agc.gain()}));
+                            self.ep = Some(if self.state() == State::Advising {
+                                Endpointer::with_limits(ADVISE_PAUSE_BLOCKS, ADVISE_MAX_BLOCKS)
+                            } else {
+                                Endpointer::new()
+                            });
+                            for b in blocks {
+                                self.listen(&b);
                             }
-                            self.to_idle();
+                        }
+                        OnsetStep::Pending => {}
+                        OnsetStep::Quiet => {
+                            self.window_peak = self.window_peak.max(level);
+                            self.window_left = self.window_left.saturating_sub(1);
+                            if self.window_left == 0 {
+                                // 只記音量，用來分辨「沒人說話」和「有說話但沒偵測到」
+                                self.log.log(
+                                    "window_timeout",
+                                    json!({"peak": self.window_peak, "floor": self.vad.floor(), "speech_blocks": self.window_speech}),
+                                );
+                                if self.state() == State::Advising {
+                                    self.end_advising(EndReason::Silence);
+                                } else {
+                                    if self.state() == State::Confirming && self.discussion.is_some() {
+                                        self.log.log("advise_save", json!({"saved": false}));
+                                    }
+                                    self.to_idle();
+                                }
+                            }
                         }
                     }
                 }
@@ -672,7 +667,6 @@ impl<P: Platform> Engine<P> {
         }
         self.ep = None;
         self.onset.clear();
-        self.onset_gap = false;
         self.window_peak = 0.0;
         self.window_speech = 0;
         self.set_state(s);

@@ -243,9 +243,79 @@ pub fn resample_to_16k(input: &[f32], from_hz: u32) -> Vec<f32> {
         .collect()
 }
 
+/// 窗口內開口要連續幾塊（0.1 秒一塊）才算，避免一聲雜音就觸發。
+pub const ONSET_BLOCKS: usize = 3;
+
+pub enum OnsetStep {
+    /// 開口成立，附上累積的全部塊。
+    Started(Vec<Vec<f32>>),
+    /// 已有開口塊但還沒定案。
+    Pending,
+    /// 沒有開口跡象。
+    Quiet,
+}
+
+/// 開口判定：連續 ONSET_BLOCKS 塊有人聲，字間容許一塊空隙。
+#[derive(Debug, Default)]
+pub struct Onset {
+    blocks: Vec<Vec<f32>>,
+    gap: bool,
+}
+
+impl Onset {
+    pub fn push(&mut self, g: Vec<f32>, speech: bool) -> OnsetStep {
+        if speech {
+            self.blocks.push(g);
+            if self.blocks.len() >= ONSET_BLOCKS + usize::from(self.gap) {
+                self.gap = false;
+                return OnsetStep::Started(std::mem::take(&mut self.blocks));
+            }
+            OnsetStep::Pending
+        } else if !self.blocks.is_empty() && !self.gap {
+            // 字與字之間的小空隙不算講完
+            self.gap = true;
+            self.blocks.push(g);
+            OnsetStep::Pending
+        } else {
+            self.clear();
+            OnsetStep::Quiet
+        }
+    }
+
+    pub fn pending(&self) -> bool {
+        !self.blocks.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.blocks.clear();
+        self.gap = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn onset_needs_three_blocks_and_allows_one_gap() {
+        let b = || vec![0.3; BLOCK];
+        let mut o = Onset::default();
+        assert!(matches!(o.push(b(), true), OnsetStep::Pending));
+        assert!(matches!(o.push(b(), false), OnsetStep::Pending)); // 字間空隙
+        assert!(matches!(o.push(b(), true), OnsetStep::Pending));
+        match o.push(b(), true) { OnsetStep::Started(v) => assert_eq!(v.len(), 4), _ => panic!("要開口") }
+        assert!(!o.pending());
+    }
+
+    #[test]
+    fn onset_single_click_is_quiet() {
+        let b = || vec![0.3; BLOCK];
+        let mut o = Onset::default();
+        assert!(matches!(o.push(b(), true), OnsetStep::Pending));
+        assert!(matches!(o.push(b(), false), OnsetStep::Pending));
+        assert!(matches!(o.push(b(), false), OnsetStep::Quiet));
+        assert!(!o.pending());
+    }
 
     fn sine(amp: f32, n: usize) -> Vec<f32> {
         (0..n).map(|i| amp * (i as f32 * 2.0 * std::f32::consts::PI * 440.0 / SR as f32).sin()).collect()

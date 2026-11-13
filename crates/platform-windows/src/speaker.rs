@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use engine::platform::{Speaker, Stopper};
-use windows::Win32::Foundation::WAIT_OBJECT_0;
+use windows::Win32::Foundation::WAIT_TIMEOUT;
 use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT, SND_SYNC, WAVE_FORMAT_PCM, WAVEFORMATEX};
 use windows::Win32::Media::Speech::{
     ISpObjectToken, ISpObjectTokenCategory, ISpStream, ISpVoice, SPCAT_VOICES, SPF_ASYNC, SPF_IS_NOT_XML,
@@ -27,7 +27,8 @@ pub struct WinSpeaker {
 fn wait_done(v: &ISpVoice, stop: &AtomicBool) {
     unsafe {
         let h = v.SpeakCompleteEvent();
-        while WaitForSingleObject(h, 50) != WAIT_OBJECT_0 {
+        // 只有逾時才繼續等；完成（WAIT_OBJECT_0）或失敗（WAIT_FAILED）都返回，免得失敗時空轉
+        while WaitForSingleObject(h, 50) == WAIT_TIMEOUT {
             if stop.load(Ordering::SeqCst) {
                 let _ = v.Speak(PCWSTR::null(), SPF_PURGEBEFORESPEAK.0 as u32, None);
                 return;

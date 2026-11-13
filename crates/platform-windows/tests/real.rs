@@ -5,7 +5,7 @@ use engine::audio::BLOCK;
 use engine::platform::{AudioSource, Devices, MicUsage, ScreenState, Speaker};
 use platform_windows::*;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// 測試程式同資料夾（CI 下載的 artifact），或 cargo 的 examples 資料夾。
 fn hold_mic() -> std::path::PathBuf {
@@ -97,4 +97,18 @@ fn speaker_says_taiwanese() {
     assert!(t.elapsed() > Duration::from_millis(200), "應該說完才回傳");
     WinSpeaker::default().chime();
     std::thread::sleep(Duration::from_millis(800));
+}
+
+#[test]
+#[ignore]
+fn say_stops_from_another_thread() {
+    let sp = WinSpeaker::default();
+    let stop = sp.stopper();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        stop();
+    });
+    let t0 = Instant::now();
+    sp.say("這是一段比較長的句子，用來測試能不能在中途被停下來，應該很快就停").unwrap();
+    assert!(t0.elapsed() < Duration::from_millis(1000), "{:?}", t0.elapsed());
 }

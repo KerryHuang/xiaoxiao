@@ -1,20 +1,40 @@
 //! 說話與提示音：SAPI 的台灣語音（LCID 0x404）。
 //! 每次呼叫都建立物件：COM 物件不是 Send，而 Speaker 要 Send。
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
-use engine::platform::Speaker;
+use engine::platform::{Speaker, Stopper};
+use windows::Win32::Foundation::WAIT_OBJECT_0;
 use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT, SND_SYNC, WAVE_FORMAT_PCM, WAVEFORMATEX};
 use windows::Win32::Media::Speech::{
-    ISpObjectToken, ISpObjectTokenCategory, ISpStream, ISpVoice, SPCAT_VOICES, SPF_IS_NOT_XML, SPFM_CREATE_ALWAYS,
-    SPFM_OPEN_READONLY, SpObjectTokenCategory, SpStream, SpVoice,
+    ISpObjectToken, ISpObjectTokenCategory, ISpStream, ISpVoice, SPCAT_VOICES, SPF_ASYNC, SPF_IS_NOT_XML,
+    SPF_PURGEBEFORESPEAK, SPFM_CREATE_ALWAYS, SPFM_OPEN_READONLY, SpObjectTokenCategory, SpStream, SpVoice,
 };
 use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
+use windows::Win32::System::Threading::WaitForSingleObject;
 use windows::core::{GUID, HSTRING, PCWSTR, w};
 
 use crate::com::Com;
 
-pub struct WinSpeaker;
+#[derive(Default)]
+pub struct WinSpeaker {
+    stop: Arc<AtomicBool>,
+}
+
+/// 等非同步的 Speak／SpeakStream 完成；每 50 ms 看一次旗標，被設就清掉佇列後返回。
+/// 只有說話的執行緒碰 COM 物件，旗標是唯一跨執行緒的東西。
+fn wait_done(v: &ISpVoice, stop: &AtomicBool) {
+    unsafe {
+        let h = v.SpeakCompleteEvent();
+        while WaitForSingleObject(h, 50) != WAIT_OBJECT_0 {
+            if stop.load(Ordering::SeqCst) {
+                let _ = v.Speak(PCWSTR::null(), SPF_PURGEBEFORESPEAK.0 as u32, None);
+                return;
+            }
+        }
+    }
+}
 
 /// 先錄好、剪掉空白的短句。即時合成的「我在」句尾有 0.7 秒空白，
 /// 而且語音引擎冷啟動時第一句要 4 秒以上，喊完要等很久才開始聽。
@@ -90,12 +110,15 @@ fn render(text: &str, path: &Path) -> Result<(), String> {
 }
 
 /// 走 SAPI 播放，不用 PlaySound：PlaySound 一次只能放一個聲音，會切掉還在響的提示音。
-fn play_wav(path: &Path) -> Result<(), String> {
+fn play_wav(path: &Path, stop: &AtomicBool) -> Result<(), String> {
     unsafe {
         let v: ISpVoice = CoCreateInstance(&SpVoice, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
         let s: ISpStream = CoCreateInstance(&SpStream, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
         s.BindToFile(&HSTRING::from(path.as_os_str()), SPFM_OPEN_READONLY, None, None, 0).map_err(|e| e.to_string())?;
-        let r = v.SpeakStream(&s, 0, None).map_err(|e| e.to_string());
+        let r = v.SpeakStream(&s, SPF_ASYNC.0 as u32, None).map_err(|e| e.to_string());
+        if r.is_ok() {
+            wait_done(&v, stop);
+        }
         let _ = s.Close();
         r
     }
@@ -109,14 +132,24 @@ pub fn voice_ok() -> bool {
 
 impl Speaker for WinSpeaker {
     fn say(&self, text: &str) -> Result<(), String> {
+        self.stop.store(false, Ordering::SeqCst);
         let _com = Com::init();
         if let Some(p) = canned(text)
-            && play_wav(p).is_ok()
+            && play_wav(p, &self.stop).is_ok()
         {
             return Ok(());
         }
         let v = voice()?;
-        unsafe { v.Speak(&HSTRING::from(text), SPF_IS_NOT_XML.0 as u32, None).map_err(|e| format!("說話失敗：{e}")) }
+        unsafe {
+            v.Speak(&HSTRING::from(text), (SPF_IS_NOT_XML.0 | SPF_ASYNC.0) as u32, None).map_err(|e| format!("說話失敗：{e}"))?;
+        }
+        wait_done(&v, &self.stop);
+        Ok(())
+    }
+
+    fn stopper(&self) -> Stopper {
+        let stop = self.stop.clone();
+        Arc::new(move || stop.store(true, Ordering::SeqCst))
     }
 
     fn chime(&self) {

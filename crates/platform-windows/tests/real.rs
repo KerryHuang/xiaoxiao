@@ -93,8 +93,8 @@ fn default_unchanged_right_after_open() {
 fn speaker_says_taiwanese() {
     assert!(voice_ok(), "沒有台灣語音");
     let t = std::time::Instant::now();
-    WinSpeaker.say("測試").unwrap();
+    WinSpeaker::default().say("測試").unwrap();
     assert!(t.elapsed() > Duration::from_millis(200), "應該說完才回傳");
-    WinSpeaker.chime();
+    WinSpeaker::default().chime();
     std::thread::sleep(Duration::from_millis(800));
 }

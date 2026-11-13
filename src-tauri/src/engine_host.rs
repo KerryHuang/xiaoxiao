@@ -62,7 +62,7 @@ impl OsPlatform {
             small: asr::Whisper::new(&models.join(SMALL))?,
             turbo: if cfg!(windows) { None } else { Some(asr::Whisper::new(&models.join(TURBO))?) },
             mic: OsMicUsage::new(),
-            speaker: OsSpeaker,
+            speaker: OsSpeaker::default(),
             notifier: TauriNotifier(app.clone()),
             claude: claude_cfg(paths, settings),
             data: paths.data.clone(),

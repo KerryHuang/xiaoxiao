@@ -4,7 +4,7 @@ use engine::audio::BLOCK;
 use engine::platform::{AudioSource, Devices, MicUsage, ScreenState, Speaker};
 use platform_mac::*;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[test]
 #[ignore]
@@ -72,7 +72,7 @@ fn screen_not_locked_during_test() {
 #[ignore]
 fn speaker_says_meijia() {
     // 小音量，避免在辦公室吵到人
-    MacSpeaker.say("[[volm 0.05]]測試").unwrap();
+    MacSpeaker::default().say("[[volm 0.05]]測試").unwrap();
 }
 
 #[test]
@@ -82,4 +82,18 @@ fn default_unchanged_right_after_open() {
     a.open(None).unwrap();
     assert!(!a.default_changed());
     a.close();
+}
+
+#[test]
+#[ignore]
+fn say_stops_from_another_thread() {
+    let sp = MacSpeaker::default();
+    let stop = sp.stopper();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        stop();
+    });
+    let t0 = Instant::now();
+    sp.say("[[volm 0.05]]這是一段比較長的句子，用來測試能不能在中途被停下來，應該很快就停").unwrap();
+    assert!(t0.elapsed() < Duration::from_millis(1000), "{:?}", t0.elapsed());
 }

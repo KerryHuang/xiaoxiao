@@ -35,12 +35,19 @@ pub trait ScreenState {
     fn locked(&self) -> bool;
 }
 
+/// 可跨執行緒呼叫的停止動作。
+pub type Stopper = std::sync::Arc<dyn Fn() + Send + Sync>;
+
 pub trait Speaker: Send {
     /// 阻塞到說完。
     fn say(&self, text: &str) -> Result<(), String>;
     fn chime(&self);
     /// 從休息被叫醒的起床音；阻塞到播完，之後才開始收音。
     fn wake_sound(&self);
+    /// 可跨執行緒呼叫：讓正在進行的 `say` 盡快返回（回 Ok）。沒在說話時呼叫無效。
+    fn stopper(&self) -> Stopper {
+        std::sync::Arc::new(|| {})
+    }
 }
 
 pub trait Notifier {

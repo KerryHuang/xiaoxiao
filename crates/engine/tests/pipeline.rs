@@ -1624,3 +1624,24 @@ fn stale_stop_does_not_cut_next_speech() {
     r.wait("說我在", |w, _| w.said.len() == 3 && w.said[2] == "我在");
     assert_eq!(r.w.lock().unwrap().stops, 0);
 }
+
+#[test]
+fn speech_after_stop_survives_until_stream_ends() {
+    // 快答被停後，引擎還要等串流收完；這段期間使用者開口的話不能被收尾的 flush 丟掉
+    let r = rig("ok-slow-tail", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.extend(["一公斤幾公克".to_string(), "那一公克呢".to_string()]);
+        w.hold = Some("一公斤是".into());
+    });
+    r.wait("正在唸回答", |w, s| s == State::Speaking && w.said.len() == 2);
+    r.h.trigger(Trigger::Hotkey);
+    std::thread::sleep(Duration::from_millis(200)); // 被停當下的 flush 已過，串流尾巴還在等
+    {
+        let mut w = r.w.lock().unwrap();
+        let u = utterance();
+        w.buffered = u.len(); // 這些塊已躺在系統緩衝
+        w.script.extend(u);
+    }
+    r.wait("停下後的問題被聽到", |w, _| w.said.len() == 3);
+}

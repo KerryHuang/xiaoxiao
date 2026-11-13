@@ -1102,13 +1102,16 @@ impl<P: Platform> Engine<P> {
         self.log.log("route", json!({"route": format!("{route:?}"), "latency_ms": t0.elapsed().as_millis() as u64}));
         match route {
             Route::Answer => {
-                if spoke {
-                    self.after_speaking();
-                }
                 if matches!(cut, Some(Cut::Stopped)) {
+                    // 串流收完前使用者可能已經開口；不 flush，免得把停下後講的話丟掉（回音在被停當下已 flush）
+                    self.ring.clear();
+                    self.p.spotter().reset();
                     self.log.log("speech_stop", json!({}));
                     self.listen_after_stop();
                 } else {
+                    if spoke {
+                        self.after_speaking();
+                    }
                     self.open_window(State::FollowUp);
                 }
             }

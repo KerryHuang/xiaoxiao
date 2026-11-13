@@ -49,6 +49,13 @@ fn main() {
             delta("1000 公克。");
             result("一公斤是1000 公克。");
         }),
+        // 第一句很快出來，串流尾巴拖 1 秒才結束
+        "ok-slow-tail" => each_line(|_| {
+            delta("一公斤是1000 公克。");
+            std::thread::sleep(Duration::from_secs(1));
+            delta("好的。");
+            result("一公斤是1000 公克。好的。");
+        }),
         "garbage" => each_line(|_| {
             println!("not json");
             delta("一公斤是");

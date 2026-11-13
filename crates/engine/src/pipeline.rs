@@ -8,7 +8,7 @@ use chrono::{DateTime, Datelike, FixedOffset, Timelike};
 use serde_json::json;
 
 use crate::action::{Action, ConfirmOutcome, Reminder, ReminderStore, append_note, missed_message, parse_confirm_reply};
-use crate::advisor::{Summary, Transcript, enter_advising, is_end_advising, parse_save_reply, parse_summary, skip_prefix, speakable};
+use crate::advisor::{INTERRUPTED, Summary, interrupt_note, Transcript, enter_advising, is_end_advising, parse_save_reply, parse_summary, skip_prefix, speakable};
 use crate::audio::{rms, Onset, OnsetStep, BLOCK, ADVISE_MAX_BLOCKS, ADVISE_PAUSE_BLOCKS, FLOOR_WARMUP, Agc, EndpointEvent, Endpointer, RingBuffer, SpeechDetector};
 use crate::claude::{ClaudeCfg, ClaudeError, Session, lookup};
 use crate::config::Settings;
@@ -179,6 +179,18 @@ struct Discussion {
     failures: u32,
     /// 存檔問句已經因為聽不懂的短回答再問過一次。
     reasked: bool,
+    /// 上一則回答被打斷（或按停）時實際唸到的內容；下一則訊息前面補成註記。
+    note: Option<String>,
+    /// 插話成立、還在等插話內容辨識結果時，被打斷的那一輪。
+    held: Option<Held>,
+}
+
+/// 被插話打斷的顧問回答：插話若是雜音或旁人的話，沒唸完的要接著唸。
+struct Held {
+    user: String,
+    full: String,
+    spoken: Vec<String>,
+    unsaid: Vec<String>,
 }
 
 /// 顧問程序要重開（沒有前面的對話）時，在訊息前面補上到目前為止的討論。
@@ -728,7 +740,10 @@ impl<P: Platform> Engine<P> {
         );
         if text.is_empty() || is_junk_transcript(&text) {
             if advising {
-                self.open_window(State::Advising);
+                match self.discussion.as_mut().and_then(|d| d.held.take()) {
+                    Some(h) => self.resume_held(h, "junk"),
+                    None => self.open_window(State::Advising),
+                }
             } else {
                 self.to_idle();
             }
@@ -802,7 +817,7 @@ impl<P: Platform> Engine<P> {
             let _rt = self.rt.enter();
             let _ = sess.warm();
         }
-        self.discussion = Some(Discussion { sess, history: Transcript::default(), summary: None, skips: 0, failures: 0, reasked: false });
+        self.discussion = Some(Discussion { sess, history: Transcript::default(), summary: None, skips: 0, failures: 0, reasked: false, note: None, held: None });
         if rest.is_empty() {
             self.speak("好，你說");
             self.open_window(State::Advising);
@@ -811,7 +826,7 @@ impl<P: Platform> Engine<P> {
         }
     }
 
-    /// 顧問的一輪：整句送 sonnet，串流邊收邊唸；不走本機指令、不做事。
+    /// 顧問的一輪：整句送 sonnet，串流邊收邊唸（句間聽空檔，使用者開口就停）；不走本機指令、不做事。
     fn advise_turn(&mut self, text: &str, at_save_prompt: bool) {
         if is_end_advising(text) {
             return self.end_advising(EndReason::Phrase);
@@ -819,78 +834,83 @@ impl<P: Platform> Engine<P> {
         let Some(mut d) = self.discussion.take() else { return self.to_idle() };
         self.set_state(State::Thinking);
         let now = self.p.now();
+        let held = d.held.take();
+        let note = d.note.take().map(|s| interrupt_note(&s)).unwrap_or_default();
         let mut buf = String::new();
         let mut skip = None;
         let mut split = SentenceSplitter::default();
-        let mut spoke = false;
         let t0 = Instant::now();
-        let r = {
-            let speaker = self.p.speaker();
+        let (r, spoken, unsaid, cut) = {
             let shared = &self.shared;
             let log = &self.log;
-            let say = |s: &str| {
-                let s = speakable(s);
-                if !s.is_empty() {
-                    set_state_raw(shared, log, State::Speaking);
-                    let _ = speaker.say(&s);
-                }
-            };
-            let msg = with_recap(&mut d, quick_message(now, text));
-            self.rt.block_on(d.sess.ask(&msg, |delta| {
+            let on_speak = || set_state_raw(shared, log, State::Speaking);
+            let mut rec = Recital::new(&mut self.p, &mut self.agc, &mut self.vad, &shared.stop_speech, &on_speak, true);
+            let msg = with_recap(&mut d, format!("{note}{}", quick_message(now, text)));
+            let r = self.rt.block_on(d.sess.ask(&msg, |delta| {
                 // 還判斷不出是不是 SKIP 之前先累積不唸
                 if skip.is_none() {
                     buf.push_str(delta);
                     skip = skip_prefix(&buf);
                     if skip == Some(false) {
                         for s in split.push(&buf) {
-                            say(&s);
-                            spoke = true;
+                            rec.sentence(&speakable(&s));
                         }
                     }
                 } else if skip == Some(false) {
                     for s in split.push(delta) {
-                        say(&s);
-                        spoke = true;
+                        rec.sentence(&speakable(&s));
                     }
                 }
-            }))
-        };
-        let mut skipped = false;
-        match r {
-            Ok(full) => {
-                let streamed = skip == Some(false);
-                skipped = skip == Some(true) || (skip.is_none() && skip_prefix(&full) == Some(true));
+            }));
+            if let Ok(full) = &r {
+                // 串流時沒判斷出來（例如完全沒有增量），改用完整結果
+                let skipped = skip == Some(true) || (skip.is_none() && skip_prefix(full) == Some(true));
                 if !skipped {
-                    // 串流時沒判斷出來（例如完全沒有增量），改用完整結果
-                    let mut rest = if streamed { vec![] } else { split.push(&full) };
+                    let mut rest = if skip == Some(false) { vec![] } else { split.push(full) };
                     rest.extend(split.finish());
                     for s in rest {
-                        let s = speakable(&s);
-                        if !s.is_empty() {
-                            self.speak(&s);
-                            spoke = false;
-                        }
+                        rec.sentence(&speakable(&s));
                     }
-                    if spoke {
-                        self.after_speaking();
-                    }
-                    d.history.push(text, &full);
-                    d.skips = 0;
-                } else {
+                }
+            }
+            (r, std::mem::take(&mut rec.spoken), std::mem::take(&mut rec.unsaid), rec.cut.take())
+        };
+        match r {
+            Ok(full) => {
+                let skipped = skip == Some(true) || (skip.is_none() && skip_prefix(&full) == Some(true));
+                d.failures = 0;
+                self.log.log("advise_turn", json!({"latency_ms": t0.elapsed().as_millis() as u64, "skip": skipped}));
+                if skipped {
                     if at_save_prompt {
                         // 存檔問句收到旁人的話：當沒回答，不再整理一次
                         self.log.log("advise_save", json!({"saved": false}));
                         return self.to_idle();
                     }
                     d.skips += 1;
+                    if d.skips >= MAX_SKIPS {
+                        // 被打斷的那輪由 end_advising 補進紀錄
+                        d.held = held;
+                        self.discussion = Some(d);
+                        return self.end_advising(EndReason::Skips);
+                    }
+                    self.discussion = Some(d);
+                    return match held {
+                        Some(h) => self.resume_held(h, "skip"),
+                        None => self.open_window(State::Advising),
+                    };
                 }
-                d.failures = 0;
-                self.log.log("advise_turn", json!({"latency_ms": t0.elapsed().as_millis() as u64, "skip": skipped}));
-                self.discussion = Some(d);
+                if let Some(h) = held {
+                    d.history.push(&h.user, &(h.spoken.concat() + INTERRUPTED));
+                }
+                d.skips = 0;
+                self.settle(d, text, full, spoken, unsaid, cut);
             }
             Err(e) => {
-                if spoke {
+                if !spoken.is_empty() {
                     self.after_speaking();
+                }
+                if let Some(h) = held {
+                    d.history.push(&h.user, &(h.spoken.concat() + INTERRUPTED));
                 }
                 self.log.log("claude", json!({"ok": false, "error": format!("{e:?}")}));
                 d.failures += 1;
@@ -899,17 +919,78 @@ impl<P: Platform> Engine<P> {
                 if self.discussion.as_ref().is_some_and(|d| d.failures >= MAX_ADVISE_FAILURES) {
                     return self.end_advising(EndReason::Failures);
                 }
+                self.open_window(State::Advising);
             }
         }
-        if skipped && self.discussion.as_ref().is_some_and(|d| d.skips >= MAX_SKIPS) {
-            return self.end_advising(EndReason::Skips);
+    }
+
+    /// 一輪唸完（或被切）之後：記進討論紀錄，決定接下來聽什麼。
+    fn settle(&mut self, mut d: Discussion, user: &str, full: String, spoken: Vec<String>, unsaid: Vec<String>, cut: Option<Cut>) {
+        match cut {
+            None => {
+                d.history.push(user, &full);
+                self.discussion = Some(d);
+                if !spoken.is_empty() {
+                    self.after_speaking();
+                }
+                self.open_window(State::Advising);
+            }
+            Some(Cut::Stopped) => {
+                let said = spoken.concat();
+                d.history.push(user, &(said.clone() + INTERRUPTED));
+                d.note = Some(said);
+                self.discussion = Some(d);
+                // 不 flush：使用者停下後立刻講的話要留著（回音在被停當下已 flush）
+                self.ring.clear();
+                self.p.spotter().reset();
+                self.log.log("speech_stop", json!({}));
+                self.open_window(State::Advising);
+            }
+            Some(Cut::Barge(blocks)) => {
+                let said = spoken.concat();
+                self.log.log("barge_in", json!({"said": spoken.len(), "left": unsaid.len()}));
+                d.note = Some(said);
+                d.held = Some(Held { user: user.to_string(), full, spoken, unsaid });
+                self.discussion = Some(d);
+                // 不 flush：開口塊已經收進來，後面的話還在緩衝裡
+                self.ring.clear();
+                self.p.spotter().reset();
+                self.open_window(State::Advising);
+                self.ep = Some(Endpointer::with_limits(ADVISE_PAUSE_BLOCKS, ADVISE_MAX_BLOCKS));
+                self.speech = true;
+                for b in blocks {
+                    self.listen(&b);
+                }
+            }
         }
-        self.open_window(State::Advising);
+    }
+
+    /// 插話是雜音或旁人的話：接著唸被打斷的後半，不送 sonnet、不帶註記。
+    fn resume_held(&mut self, held: Held, why: &str) {
+        let Some(mut d) = self.discussion.take() else { return self.to_idle() };
+        d.note = None;
+        self.log.log("barge_resume", json!({"why": why}));
+        let Held { user, full, mut spoken, unsaid } = held;
+        let (said, left, cut) = {
+            let shared = &self.shared;
+            let log = &self.log;
+            let on_speak = || set_state_raw(shared, log, State::Speaking);
+            let mut rec = Recital::new(&mut self.p, &mut self.agc, &mut self.vad, &shared.stop_speech, &on_speak, true);
+            for s in &unsaid {
+                rec.sentence(s);
+            }
+            (std::mem::take(&mut rec.spoken), std::mem::take(&mut rec.unsaid), rec.cut.take())
+        };
+        spoken.extend(said);
+        self.settle(d, &user, full, spoken, left, cut);
     }
 
     /// 結束顧問模式：談過就請 sonnet 整理重點、唸出來並問要不要存；沒談過直接回待命。
     fn end_advising(&mut self, why: EndReason) {
         let Some(mut d) = self.discussion.take() else { return self.to_idle() };
+        if let Some(h) = d.held.take() {
+            d.history.push(&h.user, &(h.spoken.concat() + INTERRUPTED));
+        }
         self.log.log("advise_end", json!({"reason": why.as_str(), "turns": d.history.len()}));
         if d.history.is_empty() {
             if matches!(why, EndReason::Phrase) {
@@ -918,7 +999,8 @@ impl<P: Platform> Engine<P> {
             return self.to_idle();
         }
         self.set_state(State::Thinking);
-        let msg = with_recap(&mut d, summary_request().to_string());
+        let note = d.note.take().map(|s| interrupt_note(&s)).unwrap_or_default();
+        let msg = with_recap(&mut d, format!("{note}{}", summary_request()));
         let r = self.rt.block_on(d.sess.ask(&msg, |_| {}));
         match r.ok().and_then(|full| parse_summary(&full)) {
             None => {

@@ -60,6 +60,8 @@ struct World {
     hold: Option<String>,
     stop_req: bool,
     stops: usize,
+    /// 每讀一塊至少睡多久（毫秒）；0 當 1。
+    read_delay_ms: u64,
 }
 
 type W = Arc<Mutex<World>>;
@@ -73,7 +75,8 @@ impl AudioSource for FakeAudio {
         w.open_results.pop_front().unwrap_or(Ok(()))
     }
     fn read_block(&mut self) -> Result<Vec<f32>, AudioError> {
-        std::thread::sleep(Duration::from_millis(1));
+        let delay = self.0.lock().unwrap().read_delay_ms.max(1);
+        std::thread::sleep(Duration::from_millis(delay));
         let mut w = self.0.lock().unwrap();
         let k = match w.script.pop_front() {
             Some(Item::Gone) => return Err(AudioError::Gone),
@@ -427,6 +430,86 @@ fn discuss_holding(mode: &str, t: Timing, texts: &[&str], hold: Option<&str>) ->
 /// 顧問程序收到的每一行訊息。
 fn advisor_msgs(r: &Rig) -> Vec<String> {
     fs::read_to_string(r.dir.path().join("claude-args.txt")).map(|s| s.lines().map(String::from).collect()).unwrap_or_default()
+}
+
+/// 進顧問模式、第一輪就拿到三句回覆；`after` 是第一句唸完後麥克風聽到的東西。
+fn long_reply(after: Vec<Item>, texts: &[&str], hold: Option<&str>, read_delay_ms: u64) -> Rig {
+    let hold = hold.map(String::from);
+    let texts: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
+    rig_full(tempfile::tempdir().unwrap(), "advise", timing(), |_| {}, move |w| {
+        w.script.extend(wake_and_ask());
+        w.script.extend(after);
+        w.small.push_back("嘿小小".into());
+        w.turbo.extend(texts);
+        w.hold = hold;
+        w.read_delay_ms = read_delay_ms;
+    })
+}
+
+#[test]
+fn barge_in_sends_the_interruption() {
+    let mut after = n(Kind::Speech, 5);
+    after.extend(n(Kind::Silence, 20));
+    let r = long_reply(after, &["我們來討論一下長一點", "等一下，我想先講登入"], None, 0);
+    r.wait("回應插話", |w, s| w.said.len() == 3 && s == State::Advising);
+    assert_eq!(r.said(), ["我在", "第一句。", REPLY]);
+    let m = advisor_msgs(&r);
+    assert!(m[1].contains("等一下，我想先講登入") && m[1].contains("只唸到") && m[1].contains("第一句。") && !m[1].contains("第二句"), "{m:?}");
+    let log = fs::read_to_string(r.dir.path().join("events.jsonl")).unwrap();
+    assert!(log.contains(r#""ev":"barge_in""#));
+}
+
+#[test]
+fn a_click_in_the_gap_does_not_cut() {
+    let mut after = n(Kind::Speech, 1);
+    after.extend(n(Kind::Silence, 30));
+    let r = long_reply(after, &["我們來討論一下長一點"], None, 0);
+    r.wait("三句都唸完", |w, s| w.said.len() == 4 && s == State::Advising);
+    assert_eq!(r.said()[1..], ["第一句。", "第二句。", "第三句。"]);
+}
+
+#[test]
+fn junk_barge_in_resumes_the_rest() {
+    let mut after = n(Kind::Speech, 5);
+    after.extend(n(Kind::Silence, 20));
+    let r = long_reply(after, &["我們來討論一下長一點", "謝謝觀看"], None, 0);
+    r.wait("接著唸完", |w, _| w.said.len() == 4);
+    assert_eq!(r.said()[1..], ["第一句。", "第二句。", "第三句。"]);
+    assert_eq!(advisor_msgs(&r).len(), 1, "垃圾字串不送 sonnet");
+}
+
+#[test]
+fn skip_barge_in_resumes_the_rest() {
+    let mut after = n(Kind::Speech, 5);
+    after.extend(n(Kind::Silence, 20));
+    after.extend(advising_utterance());
+    let r = long_reply(after, &["我們來討論一下長一點", "電視的聲音", "那匯出呢"], None, 0);
+    r.wait("接著唸完再回答下一輪", |w, _| w.said.len() == 5);
+    assert_eq!(r.said()[1..], ["第一句。", "第二句。", "第三句。", REPLY]);
+    let m = advisor_msgs(&r);
+    assert!(m[1].contains("只唸到"), "SKIP 那則帶註記：{m:?}");
+    assert!(!m[2].contains("只唸到"), "恢復後不再帶註記：{m:?}");
+}
+
+#[test]
+fn hotkey_stops_advisor_and_marks_it() {
+    let r = long_reply(advising_utterance(), &["我們來討論一下長一點", "那登入呢"], Some("第一句"), 0);
+    r.wait("唸第一句", |w, s| s == State::Speaking && w.said.last().is_some_and(|x| x == "第一句。"));
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("下一輪回答", |w, _| w.said.len() == 3);
+    assert_eq!(r.said()[1..], ["第一句。", REPLY], "剩下的直接丟掉");
+    let m = advisor_msgs(&r);
+    assert!(m[1].contains("那登入呢") && m[1].contains("只唸到"), "{m:?}");
+}
+
+#[test]
+fn hotkey_in_gap_stops_before_next_sentence() {
+    // 空檔裡沒有 say 在跑：靠引擎旗標擋下一句。讀一塊放慢到 20 ms，空檔約 80 ms，測試才按得進去
+    let r = long_reply(n(Kind::Silence, 40), &["我們來討論一下長一點"], None, 20);
+    r.wait("第一句唸完、在聽空檔", |w, s| s == State::Speaking && w.said.last().is_some_and(|x| x == "第一句。"));
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("回顧問窗口", |_, s| s == State::Advising);
+    assert_eq!(r.said()[1..], ["第一句。"], "空檔裡按停，第二句不能唸");
 }
 
 #[test]

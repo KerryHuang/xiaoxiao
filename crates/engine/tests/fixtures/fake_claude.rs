@@ -169,6 +169,11 @@ fn main() {
                     std::fs::write(&path, format!("{old}{line}\n")).unwrap();
                     if line.contains("[整理重點]") {
                         result("<<SAY>>我們談了新功能排程。\\n<<TOPIC>>新功能排程\\n<<NOTES>>\\n- 先做登入\\n- 再做匯出");
+                    } else if line.contains("長一點") {
+                        delta("第一句。");
+                        delta("第二句。");
+                        delta("第三句。");
+                        result("第一句。第二句。第三句。");
                     } else if line.contains("電視") {
                         delta("<<SK");
                         delta("IP>>");

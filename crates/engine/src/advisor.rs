@@ -79,6 +79,14 @@ pub fn speakable(sentence: &str) -> String {
     LIST_MARK.replace(s, "").trim().to_string()
 }
 
+/// 顧問的回答被使用者打斷時，紀錄裡補在已唸內容後面的標記。
+pub const INTERRUPTED: &str = "（被使用者打斷）";
+
+/// 下一則訊息前面的註記：告訴 sonnet 使用者實際聽到哪裡。
+pub fn interrupt_note(spoken: &str) -> String {
+    format!("[註記] 你上一則回答只唸到「{spoken}」就被使用者打斷，後面的使用者沒聽到。\n")
+}
+
 /// 這次顧問討論的逐輪紀錄，連線中斷重連時用來補前情。
 #[derive(Debug, Default)]
 pub struct Transcript {
@@ -241,5 +249,11 @@ mod tests {
         assert_eq!(parse_summary("<<SAY>>談了排程<<TOPIC>>排程"), None);
         assert_eq!(parse_summary("<<SAY>><<TOPIC>>排程<<NOTES>>- a"), None);
         assert_eq!(parse_summary("好。"), None);
+    }
+
+    #[test]
+    fn interrupt_note_says_what_was_heard() {
+        let n = interrupt_note("第一句。");
+        assert!(n.contains("第一句。") && n.contains("打斷") && n.ends_with('\n'));
     }
 }

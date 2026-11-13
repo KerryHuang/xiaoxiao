@@ -27,7 +27,6 @@ pub const DEGRADED_MSG: &str = "現在連不上 Claude，我只能報時和計�
 const TAIL_BLOCKS: usize = 4;
 /// 複核用的錄音長度：命中前 3.5 秒＋命中後 0.4 秒。
 const VERIFY_SECS: f32 = 3.9;
-/// 追問窗口內要連續這麼多塊（0.3 秒）有人講話才算開口。
 /// 不喊喚醒詞最多連開幾次追問窗口；之後要重新喊「嘿，小小」。
 const MAX_FOLLOWUP_WINDOWS: u32 = 3;
 /// 顧問模式連續幾次判斷是旁人的話（SKIP）就結束。

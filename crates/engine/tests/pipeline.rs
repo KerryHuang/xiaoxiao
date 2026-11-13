@@ -1398,6 +1398,23 @@ fn end_phrase_at_save_prompt_writes_nothing() {
     assert_eq!(advisor_msgs(&r).iter().filter(|m| m.contains("[整理重點]")).count(), 1, "不能再摘要一次");
 }
 
+/// 實機 11-13：「不用」被聽成「無用」。聽不懂的短回答再問一次，不拉回討論。
+#[test]
+fn unclear_short_answer_asks_again_then_saves() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣", "無用", "對"]);
+    r.wait("存好回待命", |w, s| w.said.last().is_some_and(|x| x == "存好了") && s == State::Idle);
+    assert_eq!(r.said()[4..], ["要存重點嗎", "要存嗎？說對或不用", "存好了"]);
+    assert_eq!(advisor_msgs(&r).iter().filter(|m| m.contains("無用")).count(), 0, "聽不懂的短回答不送 sonnet");
+}
+
+#[test]
+fn two_unclear_short_answers_write_nothing() {
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣", "無用", "順了"]);
+    r.wait("不存回待命", |w, s| w.said.last().is_some_and(|x| x == "好") && s == State::Idle);
+    assert_eq!(r.said()[4..], ["要存重點嗎", "要存嗎？說對或不用", "好"]);
+    assert!(notes(&r).is_none());
+}
+
 #[test]
 fn other_answer_at_save_prompt_goes_back_to_advising() {
     let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "先這樣", "等等，再補一點匯出"]);
@@ -1448,7 +1465,7 @@ fn three_skips_in_a_row_end_advising() {
 
 #[test]
 fn skip_at_save_prompt_means_no_answer() {
-    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "電視一", "電視二", "電視三", "電視四"]);
+    let r = discuss("advise", timing(), &["我們來討論", "新功能怎麼排", "電視一", "電視二", "電視三", "電視：明天會下雨喔"]);
     r.wait("問存檔後旁人又講一句", |_, _| advisor_msgs(&r).len() >= 6);
     r.wait("回待命", |_, s| s == State::Idle);
     assert_eq!(r.said().iter().filter(|s| *s == "要存重點嗎").count(), 1, "不重唸摘要：{:?}", r.said());

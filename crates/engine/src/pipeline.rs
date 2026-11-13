@@ -169,6 +169,8 @@ struct Discussion {
     skips: u32,
     /// 連續回答失敗的次數；成功就歸零。
     failures: u32,
+    /// 存檔問句已經因為聽不懂的短回答再問過一次。
+    reasked: bool,
 }
 
 /// 顧問程序要重開（沒有前面的對話）時，在訊息前面補上到目前為止的討論。
@@ -773,7 +775,7 @@ impl<P: Platform> Engine<P> {
             let _rt = self.rt.enter();
             let _ = sess.warm();
         }
-        self.discussion = Some(Discussion { sess, history: Transcript::default(), summary: None, skips: 0, failures: 0 });
+        self.discussion = Some(Discussion { sess, history: Transcript::default(), summary: None, skips: 0, failures: 0, reasked: false });
         if rest.is_empty() {
             self.speak("好，你說");
             self.open_window(State::Advising);
@@ -907,7 +909,8 @@ impl<P: Platform> Engine<P> {
         }
     }
 
-    /// 「要存重點嗎」的回答：說對才存；說不要或再講結束語就算了；其他當作繼續討論。
+    /// 「要存重點嗎」的回答：說對才存；說不要或再講結束語就算了；
+    /// 聽不懂的短回答（常是「不用」被聽錯）再問一次、第二次就不存；其他當作繼續討論。
     fn save_reply(&mut self, text: &str) {
         let reply = parse_save_reply(text);
         if reply == Some(true) {
@@ -927,6 +930,16 @@ impl<P: Platform> Engine<P> {
             self.log.log("advise_save", json!({"saved": false}));
             self.speak("好");
             self.to_idle();
+        } else if text.chars().filter(|c| c.is_alphanumeric()).count() <= 3 {
+            let again = self.discussion.as_mut().is_some_and(|d| !std::mem::replace(&mut d.reasked, true));
+            if again {
+                self.speak("要存嗎？說對或不用");
+                self.open_window(State::Confirming);
+            } else {
+                self.log.log("advise_save", json!({"saved": false}));
+                self.speak("好");
+                self.to_idle();
+            }
         } else {
             if let Some(d) = self.discussion.as_mut() {
                 d.summary = None;

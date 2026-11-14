@@ -19,7 +19,7 @@
 - [x] 工作顧問第一版（顧問模式）：說「我們來討論」連續發想、不用叫名字，結束時確認後存重點；設計 [docs/specs/2026-11-12-xiaoxiao-work-advisor-design.md](specs/2026-11-12-xiaoxiao-work-advisor-design.md)（Mac 實測通過 2026-11-13；Windows 未測）
 - [x] 連著說「嘿小小＋問題」叮一聲直接回答；連講超過 4 秒不被切斷；小小呼叫 claude 不跑使用者 hook
 - [ ] 💡 工作顧問讀資料：用使用者勾選開放的 skill／MCP（公開 repo 不寫死公司 MCP）
-- [ ] 🚧 插話打斷：顧問回答句子之間的空檔插話、說話中按快捷鍵立刻停；設計 [docs/specs/2026-11-13-xiaoxiao-barge-in-design.md](specs/2026-11-13-xiaoxiao-barge-in-design.md)（實作完成，engine 測試通過；Windows 未編譯、Mac／Windows 實機未測，實測通過才改 `[x]`）
+- [x] 插話打斷：顧問回答句子之間的空檔插話、說話中按快捷鍵或選休息立刻停；設計 [docs/specs/2026-11-13-xiaoxiao-barge-in-design.md](specs/2026-11-13-xiaoxiao-barge-in-design.md)（Mac 自測＋使用者實測通過 2026-11-14；Windows 實機未測，見 todo）
 - [ ] 📋 追問帶上下文：問完天氣、時間這類本機回答後，「那明天呢」接得上
 
 ## 之後（公開發布階段）

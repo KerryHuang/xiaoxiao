@@ -1717,6 +1717,23 @@ fn hotkey_while_answering_stops_and_listens() {
     assert_eq!(w.stops, 1);
 }
 
+/// 實機 11-14：說話中從選單選「休息」，要等整段唸完才休息。
+#[test]
+fn resting_while_answering_stops_at_once() {
+    let r = rig("ok", |w| {
+        w.script.extend(wake_and_ask());
+        w.small.push_back("嘿小小".into());
+        w.turbo.push_back("一公斤幾公克".into());
+        w.hold = Some("一公斤是".into());
+    });
+    r.wait("正在唸回答", |w, s| s == State::Speaking && w.said.len() == 2);
+    r.h.set_resting(true);
+    r.wait("停聲後休息", |_, s| s == State::Paused);
+    let w = r.w.lock().unwrap();
+    assert_eq!(w.stops, 1, "選休息要立刻停聲");
+    assert_eq!(w.chimes, 1, "直接休息，不叮一聲改聽");
+}
+
 #[test]
 fn stopping_lookup_notice_cancels_the_lookup() {
     // 「我查一下」被停：不查、直接改聽

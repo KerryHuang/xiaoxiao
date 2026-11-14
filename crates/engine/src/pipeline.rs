@@ -148,9 +148,14 @@ impl EngineHandle {
             self.0.trigger.store(true, Ordering::SeqCst);
         }
     }
+    /// 說話中選休息：跟快捷鍵一樣立刻停聲，不等整段唸完。
     pub fn set_resting(&self, on: bool) {
         self.0.resting.store(on, Ordering::SeqCst);
         self.0.recheck.store(true, Ordering::SeqCst);
+        if on && matches!(self.state(), State::Speaking | State::Acking) {
+            self.0.stop_speech.store(true, Ordering::SeqCst);
+            (self.0.stopper)();
+        }
     }
     pub fn resting(&self) -> bool {
         self.0.resting.load(Ordering::SeqCst)
@@ -709,6 +714,10 @@ impl<P: Platform> Engine<P> {
     /// 說話被快捷鍵停下後：叮一聲，直接聽使用者要說什麼。
     /// 叮聲與殘響可能被當成人聲，所以先過 `Onset`（連續 3 塊才算開口）才開始錄；不 flush，停下後立刻講的話才留得住。
     fn listen_after_stop(&mut self) {
+        if self.resting() {
+            // 是選休息停下的：不改聽，交給 check_pause 進休息
+            return;
+        }
         self.p.speaker().chime();
         self.ep = None;
         self.onset.clear();

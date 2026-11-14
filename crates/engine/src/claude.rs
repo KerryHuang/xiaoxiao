@@ -302,28 +302,40 @@ impl Session {
         Ok(Proc { child, stdin, lines })
     }
 
-    pub async fn ask(&mut self, text: &str, mut on_delta: impl FnMut(&str)) -> Result<String, ClaudeError> {
+    pub async fn ask(&mut self, text: &str, on_delta: impl FnMut(&str)) -> Result<String, ClaudeError> {
+        self.ask_until(text, on_delta, || false).await
+    }
+
+    /// 同 `ask`，但 `cut()` 一成立就不等剩下的回答：回傳到目前為止的文字並丟掉程序，
+    /// 下一次 `ask` 會重開（`needs_spawn` 為真，呼叫端照常補前情）。
+    pub async fn ask_until(
+        &mut self,
+        text: &str,
+        mut on_delta: impl FnMut(&str),
+        cut: impl Fn() -> bool,
+    ) -> Result<String, ClaudeError> {
         self.drop_stale();
         self.last = Instant::now();
         if self.proc.is_none() {
             self.proc = Some(self.spawn()?);
         }
         let (first, total) = (self.first_token, self.total);
-        let r = Self::exchange(self.proc.as_mut().unwrap(), text, &mut on_delta, first, total).await;
-        if r.is_err() {
+        let r = Self::exchange(self.proc.as_mut().unwrap(), text, &mut on_delta, &cut, first, total).await;
+        if !matches!(r, Ok((_, false))) {
             self.proc = None;
         }
         self.last = Instant::now();
-        r
+        r.map(|(t, _)| t)
     }
 
     async fn exchange(
         p: &mut Proc,
         text: &str,
         on_delta: &mut impl FnMut(&str),
+        cut: &impl Fn() -> bool,
         first_token: Duration,
         total: Duration,
-    ) -> Result<String, ClaudeError> {
+    ) -> Result<(String, bool), ClaudeError> {
         let start = tokio::time::Instant::now();
         let msg = serde_json::json!({"type": "user", "message": {"role": "user", "content": text}});
         let line = format!("{msg}\n");
@@ -333,7 +345,16 @@ impl Session {
         loop {
             // 還沒拿到第一段文字時用較短的期限；逾時由呼叫端丟掉程序（kill_on_drop）
             let limit = if acc.is_empty() { first_token.min(total) } else { total };
-            let next = tokio::time::timeout_at(start + limit, p.lines.next_line()).await.map_err(|_| ClaudeError::Timeout)?;
+            if cut() {
+                return Ok((acc, true));
+            }
+            // 每 50 ms 回頭看一次 cut；next_line 可安全取消，不會讀到半行
+            let tick = (start + limit).min(tokio::time::Instant::now() + Duration::from_millis(50));
+            let next = match tokio::time::timeout_at(tick, p.lines.next_line()).await {
+                Ok(n) => n,
+                Err(_) if tick < start + limit => continue,
+                Err(_) => return Err(ClaudeError::Timeout),
+            };
             let Some(l) = next.map_err(|_| ClaudeError::Crashed)? else { break };
             let Ok(v) = serde_json::from_str::<Value>(&l) else { continue }; // 非 JSON 行略過
             match v.get("type").and_then(Value::as_str) {
@@ -348,7 +369,7 @@ impl Session {
                 }
                 Some("result") => {
                     let r = result_of(&v)?;
-                    return Ok(if r.is_empty() { acc } else { r });
+                    return Ok((if r.is_empty() { acc } else { r }, false));
                 }
                 _ => {}
             }

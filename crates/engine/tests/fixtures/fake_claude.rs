@@ -173,6 +173,8 @@ fn main() {
                 for line in std::io::stdin().lock().lines().map_while(Result::ok) {
                     let old = std::fs::read_to_string(&path).unwrap_or_default();
                     std::fs::write(&path, format!("{old}{line}\n")).unwrap();
+                    // 依這次的新訊息回覆，不被前情提要裡的舊問題帶走
+                    let line = line.rsplit("[前情提要結束]").next().unwrap_or(&line).to_string();
                     if line.contains("[整理重點]") {
                         result("<<SAY>>我們談了新功能排程。\\n<<TOPIC>>新功能排程\\n<<NOTES>>\\n- 先做登入\\n- 再做匯出");
                     } else if line.contains("長一點") {
@@ -180,6 +182,12 @@ fn main() {
                         delta("第二句。");
                         delta("第三句。");
                         result("第一句。第二句。第三句。");
+                    } else if line.contains("很久") {
+                        // 第一句之後要很久才產生完：停下時不該等它
+                        delta("第一句。");
+                        std::thread::sleep(Duration::from_secs(3));
+                        delta("第二句。");
+                        result("第一句。第二句。");
                     } else if line.contains("電視") {
                         delta("<<SK");
                         delta("IP>>");

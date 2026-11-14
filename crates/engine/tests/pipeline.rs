@@ -548,6 +548,33 @@ fn hotkey_stops_advisor_and_marks_it() {
     assert!(m[1].contains("那登入呢") && m[1].contains("只唸到"), "{m:?}");
 }
 
+/// 實機 11-14：顧問回答中從角色右鍵選「休息」，還是唸完整段才休息。
+#[test]
+fn resting_while_advising_stops_at_once() {
+    let r = long_reply(n(Kind::Silence, 40), &["我們來討論一下長一點"], Some("第一句"), 0);
+    r.wait("唸第一句", |w, s| s == State::Speaking && w.said.last().is_some_and(|x| x == "第一句。"));
+    r.h.set_resting(true);
+    r.wait("停聲後休息", |_, s| s == State::Paused);
+    assert_eq!(r.said()[1..], ["第一句。"], "剩下的不能再唸");
+    assert_eq!(r.w.lock().unwrap().stops, 1);
+}
+
+/// 實機 11-14：顧問回答被停下後，等 sonnet 產生完才開始聽，等了約 20 秒。
+#[test]
+fn stopping_advisor_does_not_wait_for_the_rest() {
+    let r = long_reply(advising_utterance(), &["我們來討論一下很久", "那登入呢"], Some("第一句"), 0);
+    r.wait("唸第一句", |w, s| s == State::Speaking && w.said.last().is_some_and(|x| x == "第一句。"));
+    let t0 = Instant::now();
+    r.h.trigger(Trigger::Hotkey);
+    r.wait("回顧問窗口", |_, s| s == State::Advising);
+    assert!(t0.elapsed() < Duration::from_millis(1500), "不能等 sonnet 產生完：{:?}", t0.elapsed());
+    r.wait("下一輪回答", |w, _| w.said.len() == 3);
+    let spawns = fs::read_to_string(r.dir.path().join("claude-args.spawns")).unwrap();
+    assert_eq!(spawns.lines().count(), 2, "中斷的請求丟掉程序，下一輪重開：{spawns}");
+    let last = advisor_msgs(&r).last().cloned().unwrap();
+    assert!(last.contains("前情提要") && last.contains("被使用者打斷") && last.contains("那登入呢"), "{last}");
+}
+
 #[test]
 fn hotkey_in_gap_stops_before_next_sentence() {
     // 空檔裡沒有 say 在跑：靠引擎旗標擋下一句。讀一塊放慢到 20 ms，空檔約 80 ms，測試才按得進去

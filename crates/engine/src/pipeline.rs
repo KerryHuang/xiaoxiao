@@ -124,6 +124,8 @@ struct Shared {
     recheck: AtomicBool,
     /// 說話中被快捷鍵叫停；說話的那一端檢查並清掉。
     stop_speech: AtomicBool,
+    /// 外殼要求休息那一刻的狀態，進休息時記進紀錄（診斷說話中休息有沒有立刻停）。
+    rest_req: Mutex<Option<(State, Instant)>>,
     /// 可跨執行緒讓喇叭停下。
     stopper: Stopper,
     on_state: Mutex<Option<StateCb>>,
@@ -152,6 +154,9 @@ impl EngineHandle {
     pub fn set_resting(&self, on: bool) {
         self.0.resting.store(on, Ordering::SeqCst);
         self.0.recheck.store(true, Ordering::SeqCst);
+        if on {
+            *self.0.rest_req.lock().unwrap() = Some((self.state(), Instant::now()));
+        }
         if on && matches!(self.state(), State::Speaking | State::Acking) {
             self.0.stop_speech.store(true, Ordering::SeqCst);
             (self.0.stopper)();
@@ -287,6 +292,7 @@ impl<P: Platform> Engine<P> {
                 resting: AtomicBool::new(false),
                 recheck: AtomicBool::new(false),
                 stop_speech: AtomicBool::new(false),
+                rest_req: Mutex::new(None),
                 stopper,
                 on_state: Mutex::new(None),
                 on_pause: Mutex::new(None),
@@ -453,6 +459,15 @@ impl<P: Platform> Engine<P> {
                 self.log.log("advise_end", json!({"reason": EndReason::Pause.as_str(), "turns": d.history.len()}));
             }
             self.quick = None; // 暫停期間不留著 claude 佔記憶體，下次叫醒會重開
+            let req = self.shared.rest_req.lock().unwrap().take();
+            self.log.log(
+                "pause",
+                json!({
+                    "reason": format!("{:?}", self.last_pause),
+                    "state": req.map(|(s, _)| format!("{s:?}")),
+                    "latency_ms": req.map(|(_, t)| t.elapsed().as_millis() as u64),
+                }),
+            );
             self.set_state(State::Paused);
         } else if !want && matches!(s, State::Paused | State::NoMic) {
             self.open_audio();
@@ -873,7 +888,10 @@ impl<P: Platform> Engine<P> {
             let on_speak = || set_state_raw(shared, log, State::Speaking);
             let mut rec = Recital::new(&mut self.p, &mut self.agc, &mut self.vad, &shared.stop_speech, &on_speak, true);
             let msg = with_recap(&mut d, format!("{note}{}", quick_message(now, text)));
-            let r = self.rt.block_on(d.sess.ask(&msg, |delta| {
+            // 被停下就不等 sonnet 產生完；插話不中斷，插話不成立時要接著唸完整段
+            let stopped = std::cell::Cell::new(false);
+            let cut = || stopped.get() || shared.stop_speech.load(Ordering::SeqCst);
+            let r = self.rt.block_on(d.sess.ask_until(&msg, |delta| {
                 // 還判斷不出是不是 SKIP 之前先累積不唸
                 if skip.is_none() {
                     buf.push_str(delta);
@@ -888,7 +906,8 @@ impl<P: Platform> Engine<P> {
                         rec.sentence(&speakable(&s));
                     }
                 }
-            }));
+                stopped.set(matches!(rec.cut, Some(Cut::Stopped)));
+            }, cut));
             if let Ok(full) = &r {
                 // 串流時沒判斷出來（例如完全沒有增量），改用完整結果
                 let skipped = skip == Some(true) || (skip.is_none() && skip_prefix(full) == Some(true));

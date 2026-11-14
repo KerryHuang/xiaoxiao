@@ -93,7 +93,7 @@
   - 背景有一點雜音時，回答不會被切斷。
   - 句子之間的停頓聽起來可以接受（請使用者判斷）。
   - 快捷鍵在一般回答和顧問回答中都能立刻停下來。
-- **手冊**：`docs/manual.md` 補怎麼插話；`docs/feature-checklist.md` 更新狀態。
+- **手冊**：`docs/manual.md` 補怎麼插話；`docs/feature.md` 更新狀態。
 
 ## 8. 留給 builder（builder check 確認可自行決定）
 

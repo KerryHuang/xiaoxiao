@@ -52,8 +52,8 @@
 - [安裝說明](docs/install.md)
 - [操作手冊](docs/manual.md)
 - [語音實測紀錄](docs/voice-acceptance.md)
-- [設計文件](docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md)
-- [桌面小角色與休息模式設計](docs/specs/2026-11-05-xiaoxiao-desktop-character-design.md)
+- [設計文件](docs/superpowers/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md)
+- [桌面小角色與休息模式設計](docs/superpowers/specs/2026-11-05-xiaoxiao-desktop-character-design.md)
 - [語音助理做好了：小小誕生的一天](https://kerry-notes.kh-lab.workers.dev/posts/xiaoxiao-voice-assistant/)：這個專案的製作過程
 
 ## 開發

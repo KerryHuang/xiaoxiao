@@ -10,7 +10,7 @@
 
 **Tech Stack:** Rust（stable）、Tauri 2（tray、global-shortcut、autostart、notification plugin）、cpal、rubato、whisper-rs（metal feature）、sherpa-onnx C API（手寫 FFI）、tokio、serde_json、regex、chrono；UI 用 Vite＋原生 TypeScript；套件管理用 bun。
 
-**Spec:** `docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md`
+**Spec:** `docs/superpowers/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md`
 
 ## Global Constraints
 

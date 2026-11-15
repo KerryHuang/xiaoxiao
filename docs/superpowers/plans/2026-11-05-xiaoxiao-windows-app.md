@@ -10,7 +10,7 @@
 
 **Tech Stack:** Rust（`windows` 0.62、cpal 0.18）、Tauri 2（NSIS）、sherpa-onnx 2.0.1（win-x64 MD Release no-tts）、whisper-rs 0.16（CPU）、SAPI 語音、GitHub Actions `windows-latest`。
 
-**Spec:** `docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md`（Windows 相關：§4、§7、§8、§11.2、§13、§14）
+**Spec:** `docs/superpowers/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md`（Windows 相關：§4、§7、§8、§11.2、§13、§14）
 
 ## Global Constraints
 
@@ -304,7 +304,7 @@ fn short_path_keeps_ascii_path_unchanged() { /* 全 ASCII 路徑原樣回傳 */ 
 ### Task 10: 文件與測試機驗收
 
 **Files:**
-- Modify: `docs/install.md`、`README.md`、`docs/voice-acceptance.md`、`docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md`
+- Modify: `docs/install.md`、`README.md`、`docs/voice-acceptance.md`、`docs/superpowers/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md`
 
 - [ ] **Step 1:** `install.md` 加 Windows 段：系統需求（Windows 10／11 x64、CPU 支援 AVX2、Claude Code 已登入）、SmartScreen「其他資訊 → 仍要執行」、台灣語音安裝方式。「讓 AI 協助安裝」提示詞加 Windows 分支：檢查 `PROCESSOR_ARCHITECTURE`、`claude --version`、`claude auth status`，從 `releases/latest` 找 `*_x64-setup.exe`，靜默安裝到使用者目錄，啟動後交代使用者要親手做的事。同樣不輸入密碼、不提權、不關閉安全功能。Mac 段「目前只有 Mac 版」的說明拿掉。
 - [ ] **Step 2:** `README.md` 狀態改成兩個平台。`voice-acceptance.md` 加 Windows 真機清單（Step 3）。spec §3「未驗證」與 §7 依真機結果更新，記下 Windows 用的方法。

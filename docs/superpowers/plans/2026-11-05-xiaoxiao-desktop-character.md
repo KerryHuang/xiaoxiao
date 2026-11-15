@@ -12,7 +12,7 @@
 
 **Tech Stack:** Rust、Tauri 2、TypeScript、Vite（改多頁面）、SVG＋CSS 動畫。
 
-**Spec:** `docs/specs/2026-11-05-xiaoxiao-desktop-character-design.md`
+**Spec:** `docs/superpowers/specs/2026-11-05-xiaoxiao-desktop-character-design.md`
 
 ## Global Constraints
 
@@ -196,7 +196,7 @@ git commit -m "feat: 角色狀態對應、顯示條件與位置修正"
 
 - [ ] **Step 2: 移植造型**
 
-把 `docs/specs/assets/2026-11-05-character-sketches.html` 的四個造型五種狀態移植到 `src/characters.ts`，並精修。使用者設定 `prefers-reduced-motion` 時關掉動畫；NoMic／Degraded 加警告標記，`title` 顯示原因（與 `tray::status_text` 相同文字）。
+把 `docs/superpowers/specs/assets/2026-11-05-character-sketches.html` 的四個造型五種狀態移植到 `src/characters.ts`，並精修。使用者設定 `prefers-reduced-motion` 時關掉動畫；NoMic／Degraded 加警告標記，`title` 顯示原因（與 `tray::status_text` 相同文字）。
 
 - [ ] **Step 3: 接上狀態**
 
@@ -269,7 +269,7 @@ git commit -m "feat: 角色點擊、拖曳、右鍵選單與開啟流程"
 
 **Files:**
 - Modify: `src/settings.ts`、`src-tauri/src/engine_host.rs`
-- Modify: `docs/manual.md`（`:15`、`:71-78`、`:90`、`:130`）、`docs/voice-acceptance.md`、`docs/install.md`、`README.md`、`docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md`
+- Modify: `docs/manual.md`（`:15`、`:71-78`、`:90`、`:130`）、`docs/voice-acceptance.md`、`docs/install.md`、`README.md`、`docs/superpowers/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md`
 - Modify: `package.json`（`version` 同步成 `0.2.0`）
 
 **Interfaces:**
@@ -300,7 +300,7 @@ Expected: 都通過。
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/settings.ts src-tauri/src/engine_host.rs docs/manual.md docs/voice-acceptance.md docs/install.md README.md docs/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md package.json
+git add src/settings.ts src-tauri/src/engine_host.rs docs/manual.md docs/voice-acceptance.md docs/install.md README.md docs/superpowers/specs/2026-11-05-xiaoxiao-daily-assistant-app-design.md package.json
 git commit -m "feat: 設定頁換造型，更新文件"
 ```
 

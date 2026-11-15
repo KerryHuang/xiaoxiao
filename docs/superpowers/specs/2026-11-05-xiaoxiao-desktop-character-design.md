@@ -97,7 +97,7 @@
 ### 造型與設定頁
 
 - 設定頁新增「小角色造型」：平常收在抽屜裡只顯示目前的角色，打開才看到八個選項附預覽，選了立即生效。
-- 八個造型的五種狀態以 SVG 繪製；前四個的草圖見 `docs/specs/assets/2026-11-05-character-sketches.html`。
+- 八個造型的五種狀態以 SVG 繪製；前四個的草圖見 `docs/superpowers/specs/assets/2026-11-05-character-sketches.html`。
 
 ## 限制
 

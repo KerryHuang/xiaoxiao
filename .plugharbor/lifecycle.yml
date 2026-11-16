@@ -10,7 +10,7 @@ ticket:
     canceled: "closed: not planned"
   project:
     owner: KerryHuang
-    number: 1
+    number: 2
     field: Status
     options:
       backlog: Backlog
